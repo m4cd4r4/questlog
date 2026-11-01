@@ -1,0 +1,23 @@
+{
+  "name": "questlog",
+  "version": "1.0.0",
+  "description": "Tab title, panel and /sessions list showing where each session is: repo, branch, plan, stage, now, done, todo",
+  "author": {
+    "name": "Macdara"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "status_line": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Show the stage and plan in the status line above the prompt. Off hides the line; the tab title, the panel and the VS Code status bar still show where the session is.",
+      "default": true
+    },
+    "session_tag": {
+      "type": "string",
+      "title": "Session ID in the tab title",
+      "description": "clash (default): add a short session ID like [7b19a4] to a tab title only when another live session already has the same title. always: put it on every title. never: leave titles as they are. The footer matches tabs to sessions by title, so with never, two sessions with the same title can share a footer.",
+      "default": "clash"
+    }
+  }
+}

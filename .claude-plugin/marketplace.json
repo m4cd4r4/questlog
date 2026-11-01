@@ -1,0 +1,18 @@
+{
+  "name": "questlog",
+  "owner": {
+    "name": "Macdara Ó Murchú"
+  },
+  "metadata": {
+    "description": "Shows where each parallel Claude Code session is: repo, branch, plan, stage.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "questlog",
+      "source": "./mod",
+      "description": "Tab title, questlog tool and /sessions list showing where each session is: repo, branch, plan, stage, now, done, todo.",
+      "category": "workflow"
+    }
+  ]
+}

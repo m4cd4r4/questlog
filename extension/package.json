@@ -1,0 +1,230 @@
+{
+  "name": "questlog",
+  "displayName": "Questlog",
+  "description": "Where each parallel Claude Code session is: plan, step, branch. Reopen the unfinished ones.",
+  "version": "1.0.0",
+  "publisher": "macdara",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m4cd4r4/questlog",
+    "directory": "extension"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude code",
+    "questlog",
+    "sessions",
+    "parallel sessions",
+    "worktree",
+    "git worktree",
+    "plan",
+    "progress",
+    "ai agents",
+    "resume",
+    "status bar"
+  ],
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0A0A0A",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/m4cd4r4/questlog#readme",
+  "bugs": {
+    "url": "https://github.com/m4cd4r4/questlog/issues"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "icons": {
+      "questlog-logo": {
+        "description": "Questlog logo",
+        "default": {
+          "fontPath": "media/questlog.woff",
+          "fontCharacter": "\\E001"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "questlog",
+          "title": "Questlog",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "questlog": [
+        {
+          "id": "questlog.sessions",
+          "name": "Sessions",
+          "contextualTitle": "Questlog",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "questlog.refresh",
+        "title": "Refresh",
+        "category": "Questlog",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "questlog.copySessionId",
+        "title": "Copy Session ID",
+        "category": "Questlog"
+      },
+      {
+        "command": "questlog.copyResume",
+        "title": "Copy Resume Command",
+        "category": "Questlog"
+      },
+      {
+        "command": "questlog.openWorktree",
+        "title": "Open Worktree in New Window",
+        "category": "Questlog"
+      },
+      {
+        "command": "questlog.togglePane",
+        "title": "Show or Hide Questlog Panel",
+        "category": "Questlog"
+      },
+      {
+        "command": "questlog.showDetails",
+        "title": "Show Session Details",
+        "category": "Questlog"
+      }
+    ],
+    "configuration": {
+      "title": "Questlog",
+      "properties": {
+        "questlog.registryPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Worktree registry the parent plans are read from. Empty means `workspaces/registry.json` in the Claude config folder (`CLAUDE_CONFIG_DIR`, else `~/.claude`). No file, no plans."
+        },
+        "questlog.useAgentView": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Ask `claude agents --json` which sessions are running. A session waiting on you shows as Needs you, and one whose process has ended shows as unfinished straight away instead of after 6 hours. Off, or when the command fails, the view uses the session files alone."
+        },
+        "questlog.agentViewSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "markdownDescription": "How often to ask `claude agents --json`, in seconds. Each call takes about half a CPU-second, and your VS Code windows share one answer, so a wider gap costs less and shows a waiting session later."
+        },
+        "questlog.resumeCommand": {
+          "type": "string",
+          "default": "git worktree add ../{slug} -b {slug}",
+          "markdownDescription": "Command copied when you click a plan slice that has no worktree yet. `{slug}` becomes the slice's slug."
+        }
+      }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "questlog.copySessionId",
+          "when": "false"
+        },
+        {
+          "command": "questlog.copyResume",
+          "when": "false"
+        },
+        {
+          "command": "questlog.openWorktree",
+          "when": "false"
+        },
+        {
+          "command": "questlog.togglePane",
+          "when": "false"
+        },
+        {
+          "command": "questlog.showDetails",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "questlog.refresh",
+          "when": "view == questlog.sessions",
+          "group": "navigation"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "questlog.start",
+        "title": "Get started with Questlog",
+        "description": "See where every Claude Code session is, and reopen the unfinished ones. Needs the Questlog mod in Claude Code.",
+        "steps": [
+          {
+            "id": "status",
+            "title": "See the current step",
+            "description": "The status bar shows the step Claude is on, for example 2/5.",
+            "media": {
+              "image": "media/walkthrough/1-status.png",
+              "altText": "The status bar item reading 2/5 Add checkout flow"
+            }
+          },
+          {
+            "id": "list",
+            "title": "Open the session list",
+            "description": "Click the Questlog icon. Sessions are grouped by repo.\n[Open Questlog](command:workbench.view.extension.questlog)",
+            "media": {
+              "image": "media/walkthrough/2-list.png",
+              "altText": "The Questlog sidebar listing sessions grouped by repo"
+            },
+            "completionEvents": [
+              "onCommand:workbench.view.extension.questlog"
+            ]
+          },
+          {
+            "id": "steps",
+            "title": "Check a session's steps",
+            "description": "Click a card to see each step as done, now or to do.",
+            "media": {
+              "image": "media/walkthrough/3-steps.png",
+              "altText": "An open session card listing five steps, two done and one in progress"
+            }
+          },
+          {
+            "id": "resume",
+            "title": "Pick up where you stopped",
+            "description": "Unfinished sessions get a play button. Click it to reopen the session in a Claude tab. If its folder isn't open here, it copies the resume command instead.",
+            "media": {
+              "image": "media/walkthrough/4-unfinished.png",
+              "altText": "An unfinished session row with the play button that reopens it"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "check": "tsc -p .",
+    "test": "node --test test/*.test.ts",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.0"
+  }
+}
