@@ -239,7 +239,7 @@ function render() {
     if (open) for (const c of cards) root.append(...card(c).filter(Boolean));
     if (open && ended.length > 0) {
       const key = "e:" + g.repo, out = st.open.has(key);
-      root.append(h("div", { class: "endedline", tabindex: 0, role: "button", "aria-expanded": String(out), on: { click: () => toggle(st.open, key) } }, h("span", { class: "chev" }, icon("chev")), ended.length + " closed with steps left"));
+      root.append(h("div", { class: "endedline", tabindex: 0, role: "button", "aria-expanded": String(out), on: { click: () => toggle(st.open, key) } }, h("span", { class: "chev" }, icon("chev")), ended.length + (ended.length === 1 ? " tab" : " tabs") + " closed with steps left"));
       if (out) for (const c of ended) root.append(...card(c).filter(Boolean));
     }
   }

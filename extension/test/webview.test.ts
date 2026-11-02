@@ -46,7 +46,7 @@ test("a closed card names who closed it and offers undo; closed tabs wait behind
   const shut = walk(render({ summary, groups, note: [] }));
   assert.ok(shut.some((e) => e.className === "closedline" && e.textContent === "Closed by bbbbbb Tidy worktrees: Worktree gone"));
   assert.ok(shut.some((e) => e.attrs["aria-label"] === "Undo close"));
-  assert.ok(shut.some((e) => e.className === "endedline" && e.textContent === "2 closed with steps left"));
+  assert.ok(shut.some((e) => e.className === "endedline" && e.textContent === "2 tabs closed with steps left"));
   assert.ok(!shut.some((e) => e.textContent === "hidden"));
   const open = walk(render({ summary, groups, note: [] }, { open: ["e:shop"] }));
   assert.ok(open.some((e) => e.textContent === "hidden"));

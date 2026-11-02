@@ -22,7 +22,7 @@ claude plugin install questlog@questlog
 ## Details
 
 - A session appears once Claude calls the `questlog` tool, which the mod adds and asks Claude to use for tasks of 3 or more steps.
-- A finished session, or one with no plan steps yet, that goes quiet for 6 hours is marked idle and dropped after 24 hours. One with plan steps left that goes quiet shows as unfinished (amber) and stays for 7 days. Ended sessions, and sessions that never got a message or a plan, are hidden.
+- A finished session, or one with no plan steps yet, that goes quiet for 6 hours is marked idle and dropped after 24 hours. One with plan steps left that goes quiet shows as unfinished (amber) and stays for 7 days. Sessions continued with /clear, finished sessions in closed tabs, and sessions that never got a message or a plan are hidden.
 - Hover a card and click x to hide it. It comes back if the session updates.
 - If `restart-note.md` exists in the same folder, it is shown at the top of the view.
 - The **Refresh** button re-reads the folder.
