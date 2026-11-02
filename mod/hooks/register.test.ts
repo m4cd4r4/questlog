@@ -46,6 +46,7 @@ function world(on: On, w: World) {
   on('ui.open', async (_$, e) => { shown.add(e.id); w.open.push(e.id); return { value: { isPlaced: true } } as never })
   on('ui.close', async (_$, e) => { shown.delete(e.id); w.closed.push(e.id); return { value: undefined } as never })
   on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
+  on('session.end', async (_$, e) => ({ sessionId: e.sessionId }) as never)
 }
 
 const fresh = (): World => ({ open: [], closed: [], writes: [], statuses: [], misses: [] })
@@ -70,6 +71,18 @@ test('no flag: the poll never fails a read, so it logs no ENOENT line', async ($
   w.misses.length = 0
   await clock.advance(10_000)
   expect(w.misses).toEqual([])
+})
+
+test('/clear keeps the poll running, so the flag still opens the pane with no prompt', async ($, on) => {
+  const w = fresh()
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  await $.session.end({ reason: 'clear', sessionId: 'sess-1' } as never)
+  w.flag = JSON.stringify({ open: true })
+  await clock.advance(2_000)
+  expect(w.open).toEqual(['questlog'])
 })
 
 test('the flag turned on opens the pane on the next poll; turned off closes it', async ($, on) => {

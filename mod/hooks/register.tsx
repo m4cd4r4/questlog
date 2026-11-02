@@ -363,7 +363,8 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('session.end', async ($, e, next) => {
-    paneTick?.cancel()
+    // /clear keeps this process and fires no session.start, so the poll has to outlive it
+    if (e.reason !== 'clear') paneTick?.cancel()
     toolsSinceReport = 0
     await writeRow($, await read($, questlog), true)
     if (e.reason === 'clear') clearedFrom = e.sessionId
