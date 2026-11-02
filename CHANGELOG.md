@@ -7,12 +7,17 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 ### Changed
 - Session Compass is now Questlog. The tool and the `/compass` command are `questlog` and `/questlog`, the plugin ID is `questlog`, and settings moved from `sessionCompass.*` to `questlog.*`.
 - Session data moved from `~/.claude/session-compass` to `~/.claude/questlog`.
+- A tab closed with steps left waits behind one line per repo for 24 hours. It used to vanish.
 
 ### Added
 - On first run, Questlog copies your old session data and settings across, so existing sessions keep their plans. The old folder stays in place.
+- A session can close another session's card in the same repo (`questlog_close`) by accounting for every open step: finished with what proves it, or not needed with why. The panel has a Close button that asks the same of you. The card names who closed it and each reason; Undo close takes it back.
+- A step can carry a check, a path that proves it done when it exists or when it is gone. Once its session is gone, the panel closes the card when every open step checks out.
+- At the end of a turn that ran tools, Claude reports its steps once more, so the card's count is current.
 
 ### Fixed
 - A session whose Claude process has ended now gets the play button straight away, from any window. It used to show as unfinished with no button for up to 6 hours if its folder wasn't open.
+- The pane check no longer writes a log line every 2 seconds per session.
 
 ## Extension 0.5.1 - unreleased
 

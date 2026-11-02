@@ -38,6 +38,38 @@ function render(model: unknown, state: unknown = {}) {
 }
 
 const card = (id: string) => ({ id, kind: "session", state: "run", title: id, age: "1m", steps: [], total: 0, done: 0, held: 0, now: "", where: "", open: false });
+
+test("a closed card names who closed it and offers undo; closed tabs wait behind one line until it is opened", () => {
+  const summary = { sessions: 1, here: 0, running: 0, waiting: 0, held: 0, idle: 1 };
+  const closed = { ...card("a"), state: "closed", age: "closed 5m", closedBy: { tag: "bbbbbb", plan: "Tidy worktrees", evidence: "Worktree gone" } };
+  const groups = [{ repo: "shop", cards: [closed], ended: [{ ...card("hidden"), state: "held" }, { ...card("hidden2"), state: "held" }] }];
+  const shut = walk(render({ summary, groups, note: [] }));
+  assert.ok(shut.some((e) => e.className === "closedline" && e.textContent === "Closed by bbbbbb Tidy worktrees: Worktree gone"));
+  assert.ok(shut.some((e) => e.attrs["aria-label"] === "Undo close"));
+  assert.ok(shut.some((e) => e.className === "endedline" && e.textContent === "2 tabs closed with steps left"));
+  assert.ok(!shut.some((e) => e.textContent === "hidden"));
+  const open = walk(render({ summary, groups, note: [] }, { open: ["e:shop"] }));
+  assert.ok(open.some((e) => e.textContent === "hidden"));
+});
+test("an unfinished card offers Close; a card closed from the panel or by a check says so without a plan, and a not-needed step shows its reason", () => {
+  const summary = { sessions: 2, here: 0, running: 0, waiting: 0, held: 1, idle: 1 };
+  const open = { ...card("a"), state: "held", age: "unfinished 2h", total: 3, done: 1, steps: [{ status: "done", text: "one" }, { status: "todo", text: "two" }] };
+  const byHand = {
+    ...card("b"), state: "closed", age: "closed 5m", total: 2, done: 2, closedBy: { tag: "you", plan: "", evidence: "two: the team was on the call" },
+    steps: [{ status: "done", text: "one" }, { status: "not needed", text: "two", detail: "the team was on the call" }],
+  };
+  const byCheck = { ...card("c"), state: "closed", age: "closed 1m", total: 1, done: 1, closedBy: { tag: "check", plan: "", evidence: "/work/shop-old gone" }, steps: [{ status: "done", text: "one", detail: "/work/shop-old gone" }] };
+  const els = walk(render({ summary, groups: [{ repo: "shop", cards: [open, byHand, byCheck], ended: [] }], note: [] }, { seen: ["c:b"], open: ["c:b"] }));
+  const closeButtons = els.filter((e) => e.attrs["aria-label"] === "Close");
+  assert.equal(closeButtons.length, 1, "only the unfinished card offers Close");
+  assert.ok(els.some((e) => e.className === "closedline" && e.textContent === "Closed by you: two: the team was on the call"));
+  assert.ok(els.some((e) => e.className === "closedline" && e.textContent === "Closed by check: /work/shop-old gone"));
+  const dropped = els.find((e) => e.className.startsWith("step not needed"));
+  assert.ok(dropped, "the not-needed step is drawn as its own kind");
+  assert.ok(walk(dropped).some((e) => e.className === "s-more" && e.textContent === "Not needed"));
+  assert.ok(walk(dropped).some((e) => e.className === "detail" && e.textContent === "the team was on the call"));
+});
+
 const summary = { sessions: 2, here: 0, running: 2, held: 0, idle: 0 };
 
 test("collapsed repo groups with sessions in them do not show the empty state", () => {

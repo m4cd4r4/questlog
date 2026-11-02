@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
@@ -14,7 +14,7 @@ import {
 } from "./plans";
 import {
   bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
-  canResume, dismissedFrom, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, type Dismissed,
+  canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
   sessionIdFromArg, statusText, stepsOf, visibleRows, type Group, type Row, type Step,
 } from "./rows";
 
@@ -29,23 +29,60 @@ const STALE_LIVE_TICKS = 6;
 /** Same folder the mod writes to: CLAUDE_CONFIG_DIR, else ~/.claude. */
 const rowsDir = () => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "questlog");
 
-function readRows(): Row[] {
+/** The rows and the closes beside them, not yet joined: update runs the step checks on the rows before withCloses. */
+function readRows(): { rows: Row[]; closes: Map<string, Close> } {
+  const rows: Row[] = [];
+  const closes = new Map<string, Close>();
   let names: string[];
   try {
-    names = readdirSync(rowsDir()).filter((n) => n.endsWith(".json"));
+    names = readdirSync(rowsDir());
   } catch {
-    return [];
+    return { rows, closes };
   }
-  const rows: Row[] = [];
   for (const n of names) {
     try {
-      const v: unknown = JSON.parse(readFileSync(join(rowsDir(), n), "utf8"));
-      if (isRow(v)) rows.push(v);
+      const text = n.endsWith(".json") || n.endsWith(CLOSE_EXT) ? readFileSync(join(rowsDir(), n), "utf8") : "";
+      if (n.endsWith(CLOSE_EXT)) {
+        const c = closeFrom(text);
+        if (c) closes.set(n.slice(0, -CLOSE_EXT.length), c);
+      } else if (text) {
+        const v: unknown = JSON.parse(text);
+        if (isRow(v)) rows.push(v);
+      }
     } catch {
       // half-written file; the next change event reads it whole
     }
   }
-  return rows;
+  return { rows, closes };
+}
+
+const closePath = (id: string) => join(rowsDir(), `${id}${CLOSE_EXT}`);
+
+function writeClose(id: string, close: Close) {
+  try {
+    writeFileSync(closePath(id), JSON.stringify(close));
+  } catch (e) {
+    void vscode.window.showWarningMessage(`Questlog could not close that card: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/** A step's path, read for existence only, never run or opened: absolute as given, else inside the session's folder. */
+const pathExists = (r: Row) => (p: string) => {
+  if (/[\r\n]/.test(p)) return undefined;
+  if (isAbsolute(p)) return existsSync(p);
+  return r.cwd ? existsSync(join(r.cwd, p)) : undefined;
+};
+
+/** Cards whose session is gone close themselves once every open step's path checks out; a close already on disk, undone or not, holds. */
+function runChecks(rows: readonly Row[], closes: Map<string, Close>, now: number, live: ReadonlyMap<string, LiveState> | undefined) {
+  for (const r of rows) {
+    const gone = r.ended || isStale(r, now) || (live !== undefined && !live.has(r.id));
+    if (!gone) continue;
+    const c = checkClose(r, now, pathExists(r), closes.get(r.id));
+    if (!c) continue;
+    writeClose(r.id, c);
+    closes.set(r.id, c);
+  }
 }
 
 // One flag per session; the mod polls it and opens or closes its Questlog pane
@@ -176,7 +213,7 @@ li.now{font-weight:600;color:var(--vscode-textLink-foreground)}
 .d{display:block;font-weight:400;color:var(--vscode-descriptionForeground);margin-top:2px}
 </style></head><body>
 <h1>${esc(planOf(r))}</h1>
-<p class="meta">${r.total > 0 ? `${r.done}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
+<p class="meta">${r.total > 0 ? `${r.done}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}${r.closed ? `<br>Closed by ${esc(r.closed.by.slice(0, 6))}${r.closed.byPlan ? ` ${esc(r.closed.byPlan)}` : ""}${r.closed.evidence ? `: ${esc(r.closed.evidence)}` : ""}` : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
 <ul>${steps}</ul>
 </body></html>`;
 }
@@ -266,7 +303,7 @@ export function activate(context: vscode.ExtensionContext) {
         // The page only names a session; the host rebuilds the command from the row, so the page cannot choose the text
         const row = tree.rows.find((x) => x.id === m.id);
         // Same test the page's button used, re-run here: a row that does not offer the button is ignored
-        const closed = !!row && tree.live !== undefined && !tree.live.has(row.id);
+        const closed = !!row && (row.ended || (tree.live !== undefined && !tree.live.has(row.id)));
         const text = row && canResume(row, Date.now(), tree.openTags, tree.folders, closed) ? resumeCommandOf(row) : undefined;
         if (!row || !text) break;
         const copy = () => vscode.env.clipboard.writeText(text).then(() => vscode.window.setStatusBarMessage("Copied resume command: paste it in a terminal", 4000));
@@ -289,6 +326,18 @@ export function activate(context: vscode.ExtensionContext) {
         }
         break;
       }
+      case "undoClose": {
+        // Only a row this window read a close for, so the page cannot name a path
+        const row = tree.rows.find((x) => x.id === m.id && x.closed);
+        if (!row) break;
+        // Whoever made it, a check would close the card again on the next tick: the close stays on disk, marked undone, until the session reports
+        writeClose(row.id, { ...row.closed!, undone: true });
+        update();
+        break;
+      }
+      case "close":
+        void closeFromPanel(m.id);
+        break;
       case "pane":
         void vscode.commands.executeCommand(PANE_COMMAND, m.id);
         break;
@@ -304,6 +353,39 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
   const viewReg = vscode.window.registerWebviewViewProvider(VIEW, tree);
+
+  /** The person accounts for every open step, one at a time: finished, or not needed with a reason. Escape anywhere closes nothing. */
+  async function closeFromPanel(id: string) {
+    const row = tree.rows.find((x) => x.id === id);
+    if (!row) return;
+    if (row.closed) return void vscode.window.showInformationMessage(`Already closed by ${row.closed.by}. Undo that close first.`);
+    if (!hasWorkLeft(row)) return;
+    const steps: CloseStep[] = [];
+    const title = `Close "${planOf(row)}"`;
+    const open = stepsOf(row).filter((x) => x.status !== "done");
+    // A row that counts steps it never listed has nothing to go through one by one: one reason for the lot
+    if (open.length === 0) {
+      const reason = await vscode.window.showInputBox({ title, prompt: "What proves the work is done", ignoreFocusOut: true, validateInput: (v) => (v.trim() ? undefined : "Give a reason") });
+      if (reason === undefined) return;
+      steps.push({ text: planOf(row), outcome: "finished", why: reason.trim() });
+    }
+    for (const s of open) {
+      const pick = await vscode.window.showQuickPick(["Finished", "Not needed"], { title, placeHolder: s.text, ignoreFocusOut: true });
+      if (!pick) return;
+      let why = "";
+      if (pick === "Not needed") {
+        const reason = await vscode.window.showInputBox({ title, prompt: `Why "${s.text}" is not needed`, ignoreFocusOut: true, validateInput: (v) => (v.trim() ? undefined : "Give a reason") });
+        if (reason === undefined) return;
+        why = reason.trim();
+      }
+      steps.push({ text: s.text, outcome: pick === "Finished" ? "finished" : "not needed", why });
+    }
+    // The session may have reported while the prompts were up: a close against the old report would be ignored without a word
+    const latest = tree.rows.find((x) => x.id === id);
+    if (!latest || (latest.reportedAt ?? latest.updatedAt) !== (row.reportedAt ?? row.updatedAt)) return void vscode.window.showInformationMessage("Nothing closed: the session reported again meanwhile. Check its card.");
+    writeClose(row.id, closeByHand(row, steps, Date.now()));
+    update();
+  }
 
   const status = vscode.window.createStatusBarItem("questlog.status", vscode.StatusBarAlignment.Left, 50);
   status.name = "Questlog";
@@ -366,7 +448,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   const update = () => {
     pollLive();
-    tree.rows = readRows();
+    const { rows, closes } = readRows();
+    runChecks(rows, closes, Date.now(), tree.live);
+    tree.rows = withCloses(rows, closes);
     drawDetails();
     tree.note = readNote();
     tree.dismissed = readDismissed();
@@ -384,7 +468,7 @@ export function activate(context: vscode.ExtensionContext) {
     const focused = visibleRows(tree.rows, now, tree.dismissed).find((r) => r.id === tree.focusedId);
     const shown = focused ?? (planless ? undefined : rowForWorkspace(tree.rows, folders(), now));
     tree.fire();
-    const live = visibleRows(tree.rows, now, tree.dismissed).filter((r) => !isStale(r, now));
+    const live = visibleRows(tree.rows, now, tree.dismissed).filter((r) => !isStale(r, now) && !r.ended && !r.closed);
     if (tree.view) tree.view.badge = live.length > 0 ? { value: live.length, tooltip: `${live.length} live session${live.length === 1 ? "" : "s"}` } : undefined;
     if (shown) {
       status.text = `$(questlog-logo) ${statusText(shown)}`;

@@ -114,7 +114,9 @@ test("parseMessage accepts known shapes and drops the rest", () => {
   assert.deepEqual(parseMessage({ type: "copyResume", text: "cmd" }), { type: "copyResume", text: "cmd" });
   assert.deepEqual(parseMessage({ type: "openWorktree", path: "C:/w" }), { type: "openWorktree", path: "C:/w" });
   assert.deepEqual(parseMessage({ type: "dismiss", id: "a" }), { type: "dismiss", id: "a" });
+  assert.deepEqual(parseMessage({ type: "close", id: "a" }), { type: "close", id: "a" });
   assert.equal(parseMessage({ type: "dismiss" }), undefined);
+  assert.equal(parseMessage({ type: "close" }), undefined);
   assert.equal(parseMessage({ type: "openWorktree" }), undefined);
   assert.equal(parseMessage({ type: "details" }), undefined);
   assert.equal(parseMessage({ type: "copyResume", text: "" }), undefined);

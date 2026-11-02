@@ -1,7 +1,9 @@
 // Pure logic for the sidebar: no vscode import, so node --test runs it directly.
 
 export type StepStatus = "done" | "now" | "todo";
-export type Step = { text: string; status: StepStatus; detail?: string };
+/** A path that proves the step done: when it exists, or when it is gone. Absolute, or relative to the session's folder. */
+export type StepCheck = { exists: string } | { gone: string };
+export type Step = { text: string; status: StepStatus; detail?: string; check?: StepCheck };
 
 /** One file per session in ~/.claude/questlog/, written by the mod (lib.ts rowOf). */
 export type Row = {
@@ -13,13 +15,89 @@ export type Row = {
   total: number;
   now: string;
   updatedAt: number;
+  /** When the session last spoke for itself. Reopening a tab moves updatedAt, not this; rows from before it lack it. */
+  reportedAt?: number;
   ended?: boolean;
   steps?: Step[];
   branch?: string;
   cwd?: string;
   /** The tab title the mod last set; the active tab's label is matched to it. */
   title?: string;
+  /** Another session closed this card. Joined from `<id>.close` by withCloses; never stored in the row. */
+  closed?: Close;
+  /** The session stopped partway through a turn. */
+  inTurn?: boolean;
+  /** /clear moved this session's process to another session ID. */
+  continuedIn?: string;
 };
+
+/** What a close says of one step that was open: finished, or not needed and why. */
+export type CloseStep = { text: string; outcome: "finished" | "not needed"; why: string };
+
+/**
+ * Written by the session that closed the card (mod lib.ts closeOf), by this panel (closeByHand) or by a step check
+ * (checkClose). The row's owner never writes it, so neither can overwrite the other. `steps` accounts for every step
+ * that was open; closes from before it have the evidence line alone. `undone` keeps an undone check close from
+ * closing the card again until its session reports.
+ */
+export type Close = { by: string; byPlan: string; evidence: string; at: number; rowReportedAt: number; steps?: CloseStep[]; undone?: boolean };
+
+/** `by` for a close made from this panel, and for one a step check made: no session has an ID like either. */
+export const CLOSED_BY_HAND = "you";
+export const CLOSED_BY_CHECK = "check";
+
+/** `<session id>.close` beside the rows: not a .json file, so nothing reads one as a row. */
+export const CLOSE_EXT = ".close";
+
+const isCloseStep = (v: unknown): v is CloseStep => {
+  const s = v as CloseStep;
+  return !!s && typeof s.text === "string" && (s.outcome === "finished" || s.outcome === "not needed") && typeof s.why === "string";
+};
+
+export const closeFrom = (text: string): Close | undefined => {
+  try {
+    const c = JSON.parse(text) as Close;
+    if (!(typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowReportedAt === "number")) return undefined;
+    if (c.steps !== undefined && !(Array.isArray(c.steps) && c.steps.every(isCloseStep))) return undefined;
+    return c;
+  } catch {
+    return undefined;
+  }
+};
+
+/** A close holds until the session reports again, when it comes back like a hidden one. Reopening its tab is not a report. */
+export const withCloses = (rows: readonly Row[], closes: ReadonlyMap<string, Close>): Row[] =>
+  rows.map((r) => {
+    const c = closes.get(r.id);
+    return c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt) ? { ...r, closed: c } : r;
+  });
+
+const closeSteps = (steps: readonly CloseStep[]) => steps.filter((s) => s.why).map((s) => (s.outcome === "finished" ? s.why : `${s.text}: ${s.why}`)).join("; ");
+
+/**
+ * Closes a card whose every open step names a path that checks out: the close says each path and its state.
+ * Nothing when a step has no check, one fails or cannot be resolved, or a close for this report was already made or undone.
+ */
+export const checkClose = (r: Row, nowMs: number, exists: (path: string) => boolean | undefined, prior?: Close): Close | undefined => {
+  const rowReportedAt = r.reportedAt ?? r.updatedAt;
+  // A row /clear carried on is accounted for by its continuation; a row past PARKED_MS is never shown, so never checked
+  if (!hasWorkLeft(r) || r.continuedIn || nowMs - r.updatedAt >= PARKED_MS || prior?.rowReportedAt === rowReportedAt) return undefined;
+  const steps: CloseStep[] = [];
+  for (const s of stepsOf(r).filter((x) => x.status !== "done")) {
+    const c = s.check;
+    const path = c && ("exists" in c ? c.exists : c.gone);
+    if (!c || typeof path !== "string" || !path) return undefined;
+    const want = "exists" in c;
+    if (exists(path) !== want) return undefined;
+    steps.push({ text: s.text, outcome: "finished", why: `${path} ${want ? "exists" : "gone"}` });
+  }
+  return steps.length > 0 ? { by: CLOSED_BY_CHECK, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt, steps } : undefined;
+};
+
+/** The close this panel writes: the person accounted for every open step, with a reason for each one not needed. */
+export const closeByHand = (r: Row, steps: readonly CloseStep[], nowMs: number): Close => ({
+  by: CLOSED_BY_HAND, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt: r.reportedAt ?? r.updatedAt, steps: [...steps],
+});
 
 export const STALE_MS = 6 * 60 * 60 * 1000;
 /** A finished session older than this is dropped from the view. */
@@ -37,7 +115,7 @@ export const isStale = (r: Row, nowMs: number) => nowMs - r.updatedAt >= STALE_M
 export const isFinished = (r: Row) => r.total > 0 && r.done === r.total;
 
 /** Has a step list with work left. A session with no steps yet is never paused: it drops at GONE_MS like a finished one. */
-export const hasWorkLeft = (r: Row) => r.total > 0 && r.done < r.total;
+export const hasWorkLeft = (r: Row) => r.total > 0 && r.done < r.total && !r.closed;
 
 /** Hidden by hand: session id to the updatedAt it was hidden at, so a session that updates again comes back. */
 export type Dismissed = Record<string, number>;
@@ -56,16 +134,23 @@ export const dismissedFrom = (text: string): Dismissed => {
  * Live, paused and recently finished rows, newest first. Dropped: ended, hidden by hand, finished ones a
  * day old, unfinished ones a week old, and sessions that never got a message or a plan (the mod's plan
  * falls back to the first message, so an empty plan with no steps is a window that was opened and left).
+ * A card another session closed stays a day from the close, ended or not, so a wrong close can be seen.
  */
 export const visibleRows = (rows: readonly Row[], nowMs: number, dismissed: Dismissed = {}) =>
   rows
     .filter(
       (r) =>
-        !r.ended &&
+        (!r.ended || r.closed) &&
         dismissed[r.id] !== r.updatedAt &&
-        nowMs - r.updatedAt < (hasWorkLeft(r) ? PARKED_MS : GONE_MS) &&
+        nowMs - (r.closed?.at ?? r.updatedAt) < (hasWorkLeft(r) ? PARKED_MS : GONE_MS) &&
         (r.plan || r.total > 0),
     )
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
+/** Tabs closed with steps left in the last day, newest first. A close or a /clear already says where the work went. */
+export const endedRows = (rows: readonly Row[], nowMs: number, dismissed: Dismissed = {}) =>
+  rows
+    .filter((r) => r.ended && hasWorkLeft(r) && !r.continuedIn && dismissed[r.id] !== r.updatedAt && nowMs - r.updatedAt < GONE_MS)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
 export type Group = { repo: string; rows: Row[] };
@@ -128,7 +213,7 @@ const inside = (path: string, folder: string) => {
  * guess lets a click toggle the wrong session's pane.
  */
 export const rowForWorkspace = (rows: readonly Row[], folders: readonly string[], nowMs: number): Row | undefined => {
-  const live = visibleRows(rows, nowMs).filter((r) => !isStale(r, nowMs));
+  const live = visibleRows(rows, nowMs).filter((r) => !isStale(r, nowMs) && !r.ended && !r.closed);
   const byCwd = live.filter((r) => r.cwd && folders.some((f) => inside(r.cwd!, f)));
   if (byCwd.length > 0) return byCwd.length === 1 ? byCwd[0] : undefined;
   const names = folders.map((f) => norm(f).split("/").pop());
@@ -146,7 +231,7 @@ export const rowForTab = (rows: readonly Row[], label: string, nowMs: number): R
   if (!l || cutAt === "") return undefined;
   return visibleRows(rows, nowMs).find((r) => {
     const t = r.title?.trim();
-    if (!t) return false;
+    if (!t || r.ended) return false;
     return cutAt === undefined ? t === l : t === l || t.startsWith(cutAt);
   });
 };
@@ -168,7 +253,8 @@ export const noteLines = (text: string) =>
 
 /** Status bar text for this window's session. */
 export const statusText = (r: Row) => {
-  const stage = r.total > 0 ? `${r.done}/${r.total} ` : "";
+  // A close that accounted for each open step reads whole here as on its card; one from before step accounting reads as reported
+  const stage = r.total > 0 ? `${r.closed?.steps?.length ? r.total : r.done}/${r.total} ` : "";
   const now = r.now ? ` · ${cut(r.now, 32)}` : "";
   return `${stage}${cut(planOf(r), 36)}${now}`;
 };

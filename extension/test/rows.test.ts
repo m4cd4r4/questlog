@@ -142,6 +142,11 @@ test("statusText and bar", () => {
   assert.equal(bar(0, 0), "");
 });
 
+test("statusText counts a closed row whole, as the card does", () => {
+  const closed = { by: "check", byPlan: "", evidence: "x gone", at: NOW, rowReportedAt: NOW, steps: [{ text: "Remove", outcome: "finished" as const, why: "x gone" }] };
+  assert.equal(statusText(row({ done: 1, total: 2, plan: "Scratch", closed })), "2/2 Scratch");
+});
+
 test("noteLines: one item per line, markers and blanks dropped", () => {
   assert.deepEqual(noteLines("- first\r\n\n* second\n1. third\nplain\n   \n"), ["first", "second", "third", "plain"]);
   assert.deepEqual(noteLines(""), []);

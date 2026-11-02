@@ -80,6 +80,10 @@ Come back in the morning, hover the unfinished session and click play. It reopen
 - A session waiting on you gets a red card with the reason, for example a permission prompt.
 - A session whose Claude process has ended shows as unfinished straight away.
 - A session with plan steps left that goes quiet shows as unfinished (amber, "unfinished 3d").
+- A session cut off partway through a turn says "interrupted 3h".
+- A card closes only when every step it still has open is accounted for: finished, or not needed with a reason.
+- Another session can close a card that way (`questlog_close`). You can too: hover the card and click Close. The card names who closed it and each reason, and comes back if its own session reports again. Undo close takes it back.
+- A step can name a path that proves it done, such as a build output or a removed worktree. Once its session is gone, the card closes itself when every open step checks out ("Closed by check").
 
 ### Pick up where you stopped
 
@@ -152,8 +156,11 @@ One JSON file per session in `~/.claude/questlog/` (or `$CLAUDE_CONFIG_DIR/quest
 |---|---|---|---|
 | Finished, or no plan steps yet | 6 hours | idle | 24 hours |
 | Plan steps left | 6 hours | unfinished (amber, "unfinished 3d") | 7 days |
+| Tab closed with steps left | at once | one collapsed line per repo | 24 hours |
 
-Hidden sessions live in `dismissed.json` in the same folder. Ended sessions, and sessions that never got a message or a plan, are hidden.
+A close lives in `<session id>.close` beside the row.
+
+Hidden sessions live in `dismissed.json` in the same folder. Sessions continued with /clear, finished sessions in closed tabs, and sessions that never got a message or a plan are hidden.
 
 ### What it reads and sends
 

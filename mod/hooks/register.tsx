@@ -3,10 +3,10 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Questlog, Step } from '../types'
 import {
-  EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, bar, claudeDir, detailText, filesToMigrate, noteContext, headingOf, newlyDone, paneOpenOf, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
-  stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, whereFromGit, whereLabel,
+  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
+  stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
-import type { Row, TagMode } from './lib'
+import type { Close, Row, TagMode } from './lib'
 
 const PLUGIN = 'questlog'
 const PANE = 'questlog'
@@ -21,6 +21,8 @@ const GUIDE = [
   'Give `plan` as a 3-6 word name of the feature or job, and `steps` as the whole list each time, each step under 8 words.',
   'Add a `detail` (1-2 plain sentences) to a step when its label alone does not say what it covers; resend it with the whole list.',
   'Skip it for one-shot questions.',
+  'Give a step a `check` ({exists: path} or {gone: path}) when a path proves it done, such as a build output or a removed worktree: the panel then closes the card itself once this session is gone and every open step checks out.',
+  'When you finish work that another session\'s card still lists, close that card with `questlog_close`, giving its session tag and, for every step it has open, finished with what proves it or not needed with why. Call it with no session to list the cards you can close.',
 ].join(' ')
 
 async function git($: EngineInterface, args: string[]) {
@@ -34,10 +36,12 @@ let showStatus = true
 // The session_tag option; register sets it on every load
 let tagMode: TagMode = 'clash'
 
-// Everything that writes state goes through here: title source, pane, status, shared file
-async function save($: EngineInterface, change: (c: Questlog) => Questlog) {
+// Everything that writes state goes through here: title source, pane, status, shared file.
+// Only the questlog tool is a report (moves reportedAt, so a close against the row lapses); every other save is bookkeeping
+async function save($: EngineInterface, change: (c: Questlog) => Questlog, report = false) {
   const before = await read($, questlog)
-  const after = { ...change(before), updatedAt: await $.clock.now() }
+  const stamp = await $.clock.now()
+  const after = { ...change(before), updatedAt: stamp, ...(report ? { reportedAt: stamp } : {}) }
   await update($, questlog, () => after)
   if (showStatus) $.ui.status(statusText(after))
   const { total } = stage(after.steps)
@@ -81,6 +85,46 @@ async function writeRow($: EngineInterface, c: Questlog, ended: boolean) {
   const id = await $.session.id()
   const row = rowToWrite(await readRow($), id, c, ended, await $.session.root())
   await $.fs.write(`${dir}/questlog/${id}.json`, JSON.stringify(row)).catch(() => undefined)
+}
+
+async function readCloses($: EngineInterface) {
+  const dir = await rowsDir($)
+  const closes = new Map<string, Close>()
+  if (!dir) return closes
+  for (const f of await $.fs.list(`${dir}/questlog`).catch(() => [])) {
+    if (!f.name.endsWith(CLOSE_EXT)) continue
+    const text = await $.fs.read(`${dir}/questlog/${f.name}`).catch(() => '')
+    try {
+      const c = JSON.parse(String(text ?? '')) as Partial<Close> | null
+      // Only a close with the two fields isClosed and tagOf read; a half-written or hand-edited file is no close
+      if (c && typeof c.by === 'string' && typeof c.rowReportedAt === 'number') closes.set(f.name.slice(0, -CLOSE_EXT.length), c as Close)
+    } catch { /* half-written file */ }
+  }
+  return closes
+}
+
+// The mid-turn flag is a fact about the process, not a report: the card's age and any close against the row stay as they are
+async function setInTurn($: EngineInterface, inTurn: boolean) {
+  const c = await read($, questlog)
+  if (!!c.inTurn === inTurn) return
+  const after = { ...c, inTurn }
+  await update($, questlog, () => after)
+  if (after.updatedAt) await writeRow($, after, false)
+}
+
+// The session that ran /clear; the next SessionStart in this process is its continuation
+let clearedFrom: string | undefined
+
+async function linkCleared($: EngineInterface) {
+  const old = clearedFrom
+  clearedFrom = undefined
+  const dir = await rowsDir($)
+  if (!old || !dir) return
+  const path = `${dir}/questlog/${old}.json`
+  try {
+    const row = JSON.parse(String((await $.fs.read(path)) ?? '')) as Row
+    await $.fs.write(path, JSON.stringify({ ...row, continuedIn: await $.session.id() }))
+  } catch { /* no row: nothing was on that card */ }
 }
 
 // Once: data from before the rename moves across so sessions keep their plans. The old folder stays.
@@ -133,7 +177,9 @@ async function writePaneFlag($: EngineInterface, open: boolean) {
 async function syncPane($: EngineInterface) {
   const path = await paneFile($)
   if (!path) return
-  const want = paneOpenOf(String((await $.fs.read(path).catch(() => '')) ?? ''))
+  // Asked first: a read that misses logs a line, and this runs every 2 seconds in every session
+  const flagged = await $.fs.exists(path).catch(() => false)
+  const want = flagged && paneOpenOf(String((await $.fs.read(path).catch(() => '')) ?? ''))
   const panes = await $.ui.panes().catch(() => [])
   // Opened by a timer, a pane waits undrawn below 144 columns; one open behind a prompt is placed at any width
   const shown = panes.some((p: { id: string; isPlaced?: boolean }) => p.id === PANE && p.isPlaced !== false)
@@ -142,6 +188,8 @@ async function syncPane($: EngineInterface) {
 }
 
 let paneTick: { cancel: () => void } | undefined
+// Tool calls since the last report: what turnEndNudge reads
+let toolsSinceReport = 0
 
 export const register: Register = (on, options) => {
   showStatus = options.status_line !== false
@@ -166,10 +214,43 @@ export const register: Register = (on, options) => {
                 text: { type: 'string' },
                 status: { type: 'string', enum: ['done', 'now', 'todo'] },
                 detail: { type: 'string', description: 'Optional, 1-2 plain sentences: what this step covers or its sub-steps. Shown when the person clicks the step.' },
+                check: {
+                  type: 'object',
+                  description: 'Optional: one path that proves this step done, as {exists: path} or {gone: path}, absolute or relative to the session folder. Once this session is gone, the panel closes the card itself when every open step\'s path checks out. A path only, never a command.',
+                  properties: { exists: { type: 'string' }, gone: { type: 'string' } },
+                },
               },
               required: ['text', 'status'],
             },
           },
+        },
+      },
+    })
+    await $.tool.register({
+      name: 'questlog_close',
+      description:
+        'Close another session\'s Questlog card, in this repo only, by accounting for every step it still has open: finished, with what you ran or saw that proves it, or not needed, with why. ' +
+        'Give its session ID or 6 character tag. A step left out refuses the close and is named back. ' +
+        'The card names this session and each reason, and comes back if its session updates. With no session, lists the cards you can close.',
+      isDeferred: false,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          session: { type: 'string', description: 'The session ID or 6 character tag of the card. Never a plan name.' },
+          steps: {
+            type: 'array',
+            description: 'Every step the card still has open, by its text as the card shows it.',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                outcome: { type: 'string', enum: ['finished', 'not needed'] },
+                why: { type: 'string', description: 'Finished: what you ran or saw that proves it. Not needed: why the step is not required.' },
+              },
+              required: ['text', 'outcome', 'why'],
+            },
+          },
+          evidence: { type: 'string', description: 'Only for a card with no step list: what proves the work is done.' },
         },
       },
     })
@@ -193,6 +274,7 @@ export const register: Register = (on, options) => {
   on('classic.SessionStart', async ($, e, next) => {
     const r = await next(e)
     const source = (e as { source?: string }).source
+    if (source === 'clear') await linkCleared($)
     if (source === 'clear' || source === 'compact') return r
     const dir = await rowsDir($)
     if (!dir) return r
@@ -216,8 +298,27 @@ export const register: Register = (on, options) => {
     const sessionTitle = sessionTitleOf(c, previous, tag)
     const taggedName = tag ? c.plan || c.topic : undefined
     if (shownTitle !== previous || taggedName !== c.taggedName) c = await save($, x => ({ ...x, shownTitle, taggedName }))
+    await setInTurn($, true)
     return { ...r, sessionTitle }
   }).catch(($, e, next) => next(e))
+
+  // A turn that ran tools after its last report reports once more, so the card's count is current when the session stops
+  on('classic.Stop', async ($, e, next) => {
+    const r = await next(e)
+    if (r.block) return r
+    const nudge = turnEndNudge((await read($, questlog)).steps, toolsSinceReport, e.stop_hook_active)
+    toolsSinceReport = 0
+    if (nudge) return { ...r, block: nudge }
+    await setInTurn($, false)
+    return r
+  }).catch(($, e, next) => next(e))
+
+  // No catch here: a catch that calls next again would run a failed tool a second time
+  on('tool.call', async ($, e, next) => {
+    const ran = await next(e)
+    if (!/questlog/.test(e.tool)) toolsSinceReport++
+    return ran
+  })
 
   // The cast: the generated tool types list MCP servers' tools, not this mod's own
   on('tool.call', { tool: 'mcp__questlog__questlog' as 'Bash' }, async ($, e: any) => {
@@ -227,10 +328,30 @@ export const register: Register = (on, options) => {
       ...x,
       plan: typeof input.plan === 'string' && input.plan.trim() ? input.plan.trim().slice(0, 80) : x.plan,
       steps: Array.isArray(input.steps) ? steps : x.steps,
-    }))
+    }), true)
+    toolsSinceReport = 0
     const { done, total } = stage(c.steps)
     return { result: `Questlog updated: ${c.plan || '(no plan)'} ${done}/${total}` }
   }).catch(() => ({ result: 'Questlog update failed; carry on.' }))
+
+  // Who closed it comes from this session, never from the model's input
+  on('tool.call', { tool: 'mcp__questlog__questlog_close' as 'Bash' }, async ($, e: any) => {
+    const input = (e.input ?? e) as { session?: unknown; steps?: unknown; evidence?: unknown }
+    const self = await $.session.id()
+    const c = await read($, questlog)
+    const picked = pickCard(await readRows($), self, c.repo, typeof input.session === 'string' ? input.session : '')
+    if ('error' in picked) return { result: picked.error }
+    const accounted = accountSteps(picked.row, input.steps)
+    if ('error' in accounted) return { result: accounted.error }
+    const evidence = typeof input.evidence === 'string' ? input.evidence : ''
+    if (accounted.steps.length === 0 && !evidence.trim()) return { result: 'Nothing closed. Say what proves the work is done.' }
+    const closes = await readCloses($)
+    if (isClosed(picked.row, closes)) return { result: `Nothing closed. ${tagOf(closes.get(picked.row.id)!.by)} already closed this card.` }
+    const dir = await rowsDir($)
+    const close = closeOf(picked.row, self, c, accounted.steps, evidence, await $.clock.now())
+    await $.fs.write(`${dir}/questlog/${picked.row.id}${CLOSE_EXT}`, JSON.stringify(close))
+    return { result: `Closed ${tagOf(picked.row.id)} ${picked.row.plan}. Its card names this session and your evidence, and comes back if that session updates.` }
+  }).catch(() => ({ result: 'Questlog close failed; carry on.' }))
 
   // A plan written in plan mode names the plan, unless the model already did
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
@@ -252,7 +373,8 @@ export const register: Register = (on, options) => {
     const self = await $.session.id()
     await writeRow($, await read($, questlog), false)
     const rows = await readRows($)
-    return { text: sessionsReport(rows, self, await $.clock.now()) }
+    const closes = await readCloses($)
+    return { text: sessionsReport(rows.filter(r => !isClosed(r, closes)), self, await $.clock.now()) }
   })
 
   // The Pane does not draw in the VS Code panel, so the detail is printed on demand
@@ -268,8 +390,11 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('session.end', async ($, e, next) => {
-    paneTick?.cancel()
+    // /clear keeps this process and fires no session.start, so the poll has to outlive it
+    if (e.reason !== 'clear') paneTick?.cancel()
+    toolsSinceReport = 0
     await writeRow($, await read($, questlog), true)
+    if (e.reason === 'clear') clearedFrom = e.sessionId
     return next(e)
   })
 

@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, filesToMigrate, stepsFromInput, noteContext, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, whereFromGit } from './lib'
+import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -9,6 +9,27 @@ const steps = [
   { text: 'Pane render', status: 'now' as const },
   { text: 'Tests', status: 'todo' as const },
 ]
+
+test('pickCard: three sessions in one folder, only an ID or tag that fits one card in this repo picks it, never a plan name', () => {
+  const card = (id: string, plan: string, repo = 'shop', done = 1): Row => ({ id, repo, where: '', plan, done, total: 3, now: '', updatedAt: 5, cwd: '/work/shop' })
+  const rows = [card('aaaaaa01-0', 'Same plan'), card('aaaaaa02-0', 'Same plan'), card('bbbbbb00-0', 'Other'), card('cccccc00-0', 'Self'), card('dddddd00-0', 'Elsewhere', 'blog'), card('eeeeee00-0', 'Done', 'shop', 3)]
+  const pick = (s: string) => pickCard(rows, 'cccccc00-0', 'shop', s)
+  expect(pick('bbbbbb')).toEqual({ row: rows[2] })
+  expect(pick('bbbbbb00-0')).toEqual({ row: rows[2] })
+  expect(pick('aaaaaa01')).toEqual({ row: rows[0] })
+  for (const refused of ['aaaaaa', 'Same plan', 'cccccc', 'dddddd', 'eeeeee', '', 'bbb', 'ffffff']) expect('error' in pick(refused)).toBe(true)
+  expect((pick('') as { error: string }).error).toContain('bbbbbb Other 1/3')
+  expect((pick('') as { error: string }).error).not.toContain('dddddd')
+})
+
+test('turnEndNudge: only a turn that ran tools since its report, with steps left, and never twice in a row', () => {
+  const left = [{ text: 'a', status: 'done' as const }, { text: 'b', status: 'now' as const }]
+  expect(turnEndNudge(left, 3, false)).toContain('questlog')
+  expect(turnEndNudge(left, 0, false)).toBe('')
+  expect(turnEndNudge(left, 3, true)).toBe('')
+  expect(turnEndNudge([{ text: 'a', status: 'done' }], 3, false)).toBe('')
+  expect(turnEndNudge([], 3, false)).toBe('')
+})
 
 test('title: repo, worktree slug, plan and stage', () => {
   const t = title({ ...EMPTY, repo: 'myapp', branch: 'feat/x', slug: 'feature-x', plan: 'Pricing wave 3', steps })
@@ -232,6 +253,37 @@ test('stepsFromInput keeps a trimmed detail, drops an empty one, and repairs bad
   ])
   expect(stepsFromInput('nope')).toEqual([])
   expect(stepsFromInput([{ text: 'x', status: 'todo', detail: 'y'.repeat(900) }])[0].detail?.length).toBe(400)
+})
+
+test('stepsFromInput keeps a check that names one path as exists or gone, and drops any other shape', () => {
+  const kept = stepsFromInput([
+    { text: 'A', status: 'todo', check: { exists: ' dist/out.vsix ' } },
+    { text: 'B', status: 'todo', check: { gone: 'I:/Scratch/shop-old' } },
+  ])
+  expect(kept.map(s => s.check)).toEqual([{ exists: 'dist/out.vsix' }, { gone: 'I:/Scratch/shop-old' }])
+  const dropped = stepsFromInput([
+    { text: 'C', status: 'todo', check: { exists: 'a', gone: 'b' } },
+    { text: 'D', status: 'todo', check: { exists: '' } },
+    { text: 'E', status: 'todo', check: { run: 'rm -rf /' } },
+    { text: 'F', status: 'todo', check: 'dist/out.vsix' },
+    { text: 'G', status: 'todo', check: { exists: 'a\nb' } },
+    { text: 'H', status: 'done', check: { exists: 'x'.repeat(900) } },
+  ])
+  expect(dropped.map(s => 'check' in s)).toEqual([false, false, false, false, false, false])
+})
+
+test('accountSteps: a close must say of every open step that it is finished or not needed, with why, matched by text', () => {
+  const row: Row = { id: 'aaaaaa00-0', repo: 'shop', where: '', plan: 'Add checkout', done: 1, total: 3, now: '', updatedAt: 5, steps: [{ text: 'Write it', status: 'done' }, { text: 'Test it', status: 'now' }, { text: 'Tell the team', status: 'todo' }] }
+  const ok = accountSteps(row, [{ text: ' test it ', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }, { text: 'Extra', outcome: 'finished', why: 'ignored' }])
+  expect(ok).toEqual({ steps: [{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }] })
+  const missing = accountSteps(row, [{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }]) as { error: string }
+  expect(missing.error).toContain('Tell the team')
+  expect(missing.error).not.toContain('Test it')
+  expect('error' in accountSteps(row, [{ text: 'Test it', outcome: 'finished', why: '' }, { text: 'Tell the team', outcome: 'not needed', why: 'x' }])).toBe(true)
+  expect('error' in accountSteps(row, [{ text: 'Test it', outcome: 'maybe', why: 'y' }, { text: 'Tell the team', outcome: 'not needed', why: 'x' }])).toBe(true)
+  expect('error' in accountSteps(row, 'nope')).toBe(true)
+  // A row from before step lists has nothing to account for
+  expect(accountSteps({ ...row, steps: undefined }, undefined)).toEqual({ steps: [] })
 })
 
 test('filesToMigrate: rows, dismissed list and note, not what the new folder has or the cache', () => {

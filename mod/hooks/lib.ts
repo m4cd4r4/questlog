@@ -1,4 +1,4 @@
-import type { Questlog, Step, StepStatus } from '../types'
+import type { Questlog, Step, StepCheck, StepStatus } from '../types'
 
 export const EMPTY: Questlog = { repo: '', branch: '', slug: '', plan: '', topic: '', steps: [], updatedAt: 0 }
 
@@ -96,6 +96,18 @@ export const bar = (done: number, total: number, width = 12) => {
   return '█'.repeat(filled) + '░'.repeat(width - filled)
 }
 
+// A check is one path, read for existence only, so it is kept as {exists} or {gone} with nothing else: never a command
+const checkFromInput = (v: unknown): StepCheck | undefined => {
+  if (!v || typeof v !== 'object') return undefined
+  const keys = Object.keys(v)
+  if (keys.length !== 1 || (keys[0] !== 'exists' && keys[0] !== 'gone')) return undefined
+  const path = (v as Record<string, unknown>)[keys[0]]
+  if (typeof path !== 'string') return undefined
+  const clean = path.trim()
+  if (!clean || clean.length > 400 || /[\r\n]/.test(clean)) return undefined
+  return keys[0] === 'exists' ? { exists: clean } : { gone: clean }
+}
+
 // The tool's `steps` input as clean Steps: text capped, bad status falls to todo, detail kept only when it says something
 export const stepsFromInput = (input: unknown): Step[] =>
   Array.isArray(input)
@@ -107,7 +119,8 @@ export const stepsFromInput = (input: unknown): Step[] =>
             status: (['done', 'now', 'todo'].includes(s.status) ? s.status : 'todo') as StepStatus,
           }
           const detail = typeof s.detail === 'string' ? s.detail.trim().slice(0, 400) : ''
-          return detail ? { ...step, detail } : step
+          const check = checkFromInput(s.check)
+          return { ...step, ...(detail ? { detail } : {}), ...(check ? { check } : {}) }
         })
     : []
 
@@ -178,12 +191,17 @@ export type Row = {
   total: number
   now: string
   updatedAt: number
+  // What a close is held against; rows written before it lack it
+  reportedAt?: number
   ended?: boolean
   // Read by the VS Code sidebar; rows written before 0.2.0 lack them
   steps?: Step[]
   branch?: string
   cwd?: string
   title?: string
+  inTurn?: boolean
+  // /clear moved this session's process to another session ID
+  continuedIn?: string
 }
 
 export const STALE_MS = 6 * 60 * 60 * 1000
@@ -192,9 +210,77 @@ export const rowOf = (id: string, c: Questlog, ended = false, cwd = ''): Row => 
   const { done, total, now } = stage(c.steps)
   return {
     id, repo: c.repo, where: whereLabel(c), plan: c.plan || c.topic, done, total, now, updatedAt: c.updatedAt, ended,
-    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '',
+    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '', ...(c.reportedAt ? { reportedAt: c.reportedAt } : {}), ...(c.inTurn ? { inTurn: true } : {}),
   }
 }
+
+// Another session's word that a card is finished. Its own file, so neither session overwrites the other's;
+// it holds until the owner reports again (the extension's withCloses); reopening the owner's tab is not a report.
+// `steps` accounts for every step that was open; `undone` is the extension's mark on a check close the person took back
+export type CloseStep = { text: string, outcome: 'finished' | 'not needed', why: string }
+export type Close = { by: string, byPlan: string, evidence: string, at: number, rowReportedAt: number, steps?: CloseStep[], undone?: boolean }
+export const CLOSE_EXT = '.close'
+
+const key = (text: string) => text.trim().toLowerCase()
+
+// A close says of every open step that it is finished or not needed, and why, so no card closes on one line about part of the work.
+// Steps are matched by their text as the card shows it; a row from before step lists has nothing to account for
+export const accountSteps = (row: Row, input: unknown): { steps: CloseStep[] } | { error: string } => {
+  const open = (row.steps ?? []).filter(s => s.status !== 'done')
+  if (open.length === 0) return { steps: [] }
+  const given = Array.isArray(input) ? input : []
+  const steps: CloseStep[] = []
+  const missing: string[] = []
+  for (const s of open) {
+    const g: any = given.find((x: any) => x && typeof x.text === 'string' && key(x.text) === key(s.text))
+    const outcome = g?.outcome === 'finished' || g?.outcome === 'not needed' ? g.outcome : undefined
+    const why = typeof g?.why === 'string' ? g.why.trim().slice(0, 400) : ''
+    if (!outcome || !why) missing.push(s.text)
+    else steps.push({ text: s.text, outcome, why })
+  }
+  return missing.length > 0
+    ? { error: `Nothing closed. Say of each of these steps whether it is finished or not needed, and why:\n${missing.map(t => `- ${t}`).join('\n')}` }
+    : { steps }
+}
+
+const flatId = (id: string) => id.replace(/-/g, '').toLowerCase()
+
+const openCards = (rows: readonly Row[], selfId: string, repo: string) =>
+  rows.filter(r => r.id && r.id !== selfId && r.repo === repo && r.total > 0 && r.done < r.total)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+
+// Only by session ID or its 6 character tag, never by plan name: two sessions can share a plan, and a guess closes the wrong card.
+// Only in this session's own repo, which also limits how far a wrong or hostile close reaches
+export const pickCard = (rows: readonly Row[], selfId: string, repo: string, session: string): { row: Row } | { error: string } => {
+  const want = flatId(session.trim())
+  const open = openCards(rows, selfId, repo)
+  const list = open.slice(0, 20).map(r => `${tagOf(r.id)} ${r.plan || '(no plan)'} ${r.done}/${r.total}`).join('\n')
+  const choices = list ? `Cards with steps left in ${repo || 'this repo'}:\n${list}` : `No other card in ${repo || 'this repo'} has steps left.`
+  if (want.length < 6) return { error: `Nothing closed. Name a card by session ID or 6 character tag.\n${choices}` }
+  if (flatId(selfId).startsWith(want)) return { error: 'Nothing closed. That is this session: report your own steps with questlog.' }
+  const hits = open.filter(r => flatId(r.id).startsWith(want))
+  if (hits.length !== 1) return { error: `Nothing closed. ${session.trim()} fits ${hits.length} cards.\n${choices}` }
+  return { row: hits[0] }
+}
+
+// The evidence line is the steps' reasons; a row with no step list keeps the one line the closer gave
+export const closeOf = (row: Row, byId: string, c: Questlog, steps: readonly CloseStep[], evidence: string, nowMs: number): Close => ({
+  by: byId, byPlan: cut(c.plan || c.topic || c.repo, 80),
+  evidence: steps.length > 0 ? steps.map(s => (s.outcome === 'finished' ? s.why : `${s.text}: ${s.why}`)).join('; ').slice(0, 400) : evidence.trim().slice(0, 400),
+  at: nowMs, rowReportedAt: row.reportedAt ?? row.updatedAt, ...(steps.length > 0 ? { steps: [...steps] } : {}),
+})
+
+export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => {
+  const c = closes.get(r.id)
+  return !!c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt)
+}
+
+// What stops a turn that ran tools after its last report, so the card's count is current. Once per stop:
+// stop_hook_active is the model answering this, and a plan with nothing left has nothing to correct
+export const turnEndNudge = (steps: readonly Step[], toolsSinceReport: number, stopHookActive: boolean) =>
+  !stopHookActive && toolsSinceReport > 0 && steps.some(s => s.status !== 'done')
+    ? 'Questlog: tools ran since your last report. Call questlog once with the plan and the whole step list as they stand now, marking everything that is finished as done, then stop. No narration.'
+    : ''
 
 const isEmpty = (c: Questlog) => !c.plan && !c.topic && c.steps.length === 0
 
@@ -207,6 +293,7 @@ export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
     ...c,
     branch: c.branch || saved.branch || '',
     shownTitle: saved.title || undefined,
+    reportedAt: saved.reportedAt ?? saved.updatedAt,
     ...(steps.length > 0 ? { plan: saved.plan, steps } : { topic: saved.plan }),
   }
 }
