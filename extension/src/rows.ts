@@ -1,7 +1,9 @@
 // Pure logic for the sidebar: no vscode import, so node --test runs it directly.
 
 export type StepStatus = "done" | "now" | "todo";
-export type Step = { text: string; status: StepStatus; detail?: string };
+/** A path that proves the step done: when it exists, or when it is gone. Absolute, or relative to the session's folder. */
+export type StepCheck = { exists: string } | { gone: string };
+export type Step = { text: string; status: StepStatus; detail?: string; check?: StepCheck };
 
 /** One file per session in ~/.claude/questlog/, written by the mod (lib.ts rowOf). */
 export type Row = {
@@ -29,16 +31,35 @@ export type Row = {
   continuedIn?: string;
 };
 
-/** Written by the session that closed the card (mod lib.ts closeOf). The row's owner never writes it, so neither can overwrite the other. */
-export type Close = { by: string; byPlan: string; evidence: string; at: number; rowReportedAt: number };
+/** What a close says of one step that was open: finished, or not needed and why. */
+export type CloseStep = { text: string; outcome: "finished" | "not needed"; why: string };
+
+/**
+ * Written by the session that closed the card (mod lib.ts closeOf), by this panel (closeByHand) or by a step check
+ * (checkClose). The row's owner never writes it, so neither can overwrite the other. `steps` accounts for every step
+ * that was open; closes from before it have the evidence line alone. `undone` keeps an undone check close from
+ * closing the card again until its session reports.
+ */
+export type Close = { by: string; byPlan: string; evidence: string; at: number; rowReportedAt: number; steps?: CloseStep[]; undone?: boolean };
+
+/** `by` for a close made from this panel, and for one a step check made: no session has an ID like either. */
+export const CLOSED_BY_HAND = "you";
+export const CLOSED_BY_CHECK = "check";
 
 /** `<session id>.close` beside the rows: not a .json file, so nothing reads one as a row. */
 export const CLOSE_EXT = ".close";
 
+const isCloseStep = (v: unknown): v is CloseStep => {
+  const s = v as CloseStep;
+  return !!s && typeof s.text === "string" && (s.outcome === "finished" || s.outcome === "not needed") && typeof s.why === "string";
+};
+
 export const closeFrom = (text: string): Close | undefined => {
   try {
     const c = JSON.parse(text) as Close;
-    return typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowReportedAt === "number" ? c : undefined;
+    if (!(typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowReportedAt === "number")) return undefined;
+    if (c.steps !== undefined && !(Array.isArray(c.steps) && c.steps.every(isCloseStep))) return undefined;
+    return c;
   } catch {
     return undefined;
   }
@@ -48,8 +69,34 @@ export const closeFrom = (text: string): Close | undefined => {
 export const withCloses = (rows: readonly Row[], closes: ReadonlyMap<string, Close>): Row[] =>
   rows.map((r) => {
     const c = closes.get(r.id);
-    return c && c.rowReportedAt === (r.reportedAt ?? r.updatedAt) ? { ...r, closed: c } : r;
+    return c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt) ? { ...r, closed: c } : r;
   });
+
+const closeSteps = (steps: readonly CloseStep[]) => steps.filter((s) => s.why).map((s) => (s.outcome === "finished" ? s.why : `${s.text}: ${s.why}`)).join("; ");
+
+/**
+ * Closes a card whose every open step names a path that checks out: the close says each path and its state.
+ * Nothing when a step has no check, one fails or cannot be resolved, or a close for this report was already made or undone.
+ */
+export const checkClose = (r: Row, nowMs: number, exists: (path: string) => boolean | undefined, prior?: Close): Close | undefined => {
+  const rowReportedAt = r.reportedAt ?? r.updatedAt;
+  if (!hasWorkLeft(r) || prior?.rowReportedAt === rowReportedAt) return undefined;
+  const steps: CloseStep[] = [];
+  for (const s of stepsOf(r).filter((x) => x.status !== "done")) {
+    const c = s.check;
+    const path = c && ("exists" in c ? c.exists : c.gone);
+    if (!c || typeof path !== "string" || !path) return undefined;
+    const want = "exists" in c;
+    if (exists(path) !== want) return undefined;
+    steps.push({ text: s.text, outcome: "finished", why: `${path} ${want ? "exists" : "gone"}` });
+  }
+  return steps.length > 0 ? { by: CLOSED_BY_CHECK, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt, steps } : undefined;
+};
+
+/** The close this panel writes: the person accounted for every open step, with a reason for each one not needed. */
+export const closeByHand = (r: Row, steps: readonly CloseStep[], nowMs: number): Close => ({
+  by: CLOSED_BY_HAND, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt: r.reportedAt ?? r.updatedAt, steps: [...steps],
+});
 
 export const STALE_MS = 6 * 60 * 60 * 1000;
 /** A finished session older than this is dropped from the view. */

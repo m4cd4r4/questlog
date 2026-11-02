@@ -1,5 +1,7 @@
 export type StepStatus = 'done' | 'now' | 'todo'
-export type Step = { text: string; status: StepStatus; detail?: string }
+// A path that proves the step done: when it exists, or when it is gone. Absolute, or relative to the session folder
+export type StepCheck = { exists: string } | { gone: string }
+export type Step = { text: string; status: StepStatus; detail?: string; check?: StepCheck }
 export type Questlog = {
   repo: string
   branch: string

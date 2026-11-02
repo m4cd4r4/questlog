@@ -11,7 +11,8 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 
 ### Added
 - On first run, Questlog copies your old session data and settings across, so existing sessions keep their plans. The old folder stays in place.
-- A session can close another session's card in the same repo, with evidence (`questlog_close`). The card names who closed it, and Undo close takes it back.
+- A session can close another session's card in the same repo (`questlog_close`) by accounting for every open step: finished with what proves it, or not needed with why. The panel has a Close button that asks the same of you. The card names who closed it and each reason; Undo close takes it back.
+- A step can carry a check, a path that proves it done when it exists or when it is gone. Once its session is gone, the panel closes the card when every open step checks out.
 - At the end of a turn that ran tools, Claude reports its steps once more, so the card's count is current.
 
 ### Fixed

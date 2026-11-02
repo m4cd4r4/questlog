@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Questlog, Step } from '../types'
 import {
-  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
+  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
   stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
@@ -21,7 +21,8 @@ const GUIDE = [
   'Give `plan` as a 3-6 word name of the feature or job, and `steps` as the whole list each time, each step under 8 words.',
   'Add a `detail` (1-2 plain sentences) to a step when its label alone does not say what it covers; resend it with the whole list.',
   'Skip it for one-shot questions.',
-  'When you finish work that another session\'s card still lists, close that card with `questlog_close`, giving its session tag and what proves the work is done. Call it with no session to list the cards you can close.',
+  'Give a step a `check` ({exists: path} or {gone: path}) when a path proves it done, such as a build output or a removed worktree: the panel then closes the card itself once this session is gone and every open step checks out.',
+  'When you finish work that another session\'s card still lists, close that card with `questlog_close`, giving its session tag and, for every step it has open, finished with what proves it or not needed with why. Call it with no session to list the cards you can close.',
 ].join(' ')
 
 async function git($: EngineInterface, args: string[]) {
@@ -208,6 +209,11 @@ export const register: Register = (on, options) => {
                 text: { type: 'string' },
                 status: { type: 'string', enum: ['done', 'now', 'todo'] },
                 detail: { type: 'string', description: 'Optional, 1-2 plain sentences: what this step covers or its sub-steps. Shown when the person clicks the step.' },
+                check: {
+                  type: 'object',
+                  description: 'Optional: one path that proves this step done, as {exists: path} or {gone: path}, absolute or relative to the session folder. Once this session is gone, the panel closes the card itself when every open step\'s path checks out. A path only, never a command.',
+                  properties: { exists: { type: 'string' }, gone: { type: 'string' } },
+                },
               },
               required: ['text', 'status'],
             },
@@ -218,15 +224,28 @@ export const register: Register = (on, options) => {
     await $.tool.register({
       name: 'questlog_close',
       description:
-        'Close another session\'s Questlog card when its remaining steps are done, in this repo only. ' +
-        'Give its session ID or 6 character tag, and the evidence: what you ran or saw that proves the work is done. ' +
-        'The card names this session and the evidence, and comes back if its session updates. With no session, lists the cards you can close.',
+        'Close another session\'s Questlog card, in this repo only, by accounting for every step it still has open: finished, with what you ran or saw that proves it, or not needed, with why. ' +
+        'Give its session ID or 6 character tag. A step left out refuses the close and is named back. ' +
+        'The card names this session and each reason, and comes back if its session updates. With no session, lists the cards you can close.',
       isDeferred: false,
       inputSchema: {
         type: 'object',
         properties: {
           session: { type: 'string', description: 'The session ID or 6 character tag of the card. Never a plan name.' },
-          evidence: { type: 'string', description: 'What proves the work is done, 1-2 plain sentences.' },
+          steps: {
+            type: 'array',
+            description: 'Every step the card still has open, by its text as the card shows it.',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string' },
+                outcome: { type: 'string', enum: ['finished', 'not needed'] },
+                why: { type: 'string', description: 'Finished: what you ran or saw that proves it. Not needed: why the step is not required.' },
+              },
+              required: ['text', 'outcome', 'why'],
+            },
+          },
+          evidence: { type: 'string', description: 'Only for a card with no step list: what proves the work is done.' },
         },
       },
     })
@@ -311,17 +330,19 @@ export const register: Register = (on, options) => {
 
   // Who closed it comes from this session, never from the model's input
   on('tool.call', { tool: 'mcp__questlog__questlog_close' as 'Bash' }, async ($, e: any) => {
-    const input = (e.input ?? e) as { session?: unknown; evidence?: unknown }
+    const input = (e.input ?? e) as { session?: unknown; steps?: unknown; evidence?: unknown }
     const self = await $.session.id()
     const c = await read($, questlog)
     const picked = pickCard(await readRows($), self, c.repo, typeof input.session === 'string' ? input.session : '')
     if ('error' in picked) return { result: picked.error }
+    const accounted = accountSteps(picked.row, input.steps)
+    if ('error' in accounted) return { result: accounted.error }
     const evidence = typeof input.evidence === 'string' ? input.evidence : ''
-    if (!evidence.trim()) return { result: 'Nothing closed. Say what proves the work is done.' }
+    if (accounted.steps.length === 0 && !evidence.trim()) return { result: 'Nothing closed. Say what proves the work is done.' }
     const closes = await readCloses($)
     if (isClosed(picked.row, closes)) return { result: `Nothing closed. ${tagOf(closes.get(picked.row.id)!.by)} already closed this card.` }
     const dir = await rowsDir($)
-    const close = closeOf(picked.row, self, c, evidence, await $.clock.now())
+    const close = closeOf(picked.row, self, c, accounted.steps, evidence, await $.clock.now())
     await $.fs.write(`${dir}/questlog/${picked.row.id}${CLOSE_EXT}`, JSON.stringify(close))
     return { result: `Closed ${tagOf(picked.row.id)} ${picked.row.plan}. Its card names this session and your evidence, and comes back if that session updates.` }
   }).catch(() => ({ result: 'Questlog close failed; carry on.' }))

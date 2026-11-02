@@ -145,6 +145,28 @@ test('questlog_close: writes who and what proves it beside the row, leaves the r
   expect(JSON.parse(w.files[`C:/cfg/questlog/${A}.close`]).evidence).toBe('git worktree list no longer shows it')
 })
 
+test('questlog_close on a card with steps: refused until every open step is finished or not needed with why, then the close carries them', async ($, on) => {
+  const A = 'aaaaaa00-0'
+  const steps = [{ text: 'Write it', status: 'done' }, { text: 'Test it', status: 'now' }, { text: 'Tell the team', status: 'todo' }]
+  const row = JSON.stringify({ id: A, repo: 'repo', where: '', plan: 'Add checkout', done: 1, total: 3, now: 'Test it', steps, updatedAt: 7, cwd: 'C:/work/repo' })
+  const w = { ...fresh(), files: { [`C:/cfg/questlog/${A}.json`]: row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't1', plan: 'Tidy worktrees', steps: [{ text: 'a', status: 'now' }] } as never)
+  const call = (steps: unknown, evidence?: string) => $.tool.call({ tool: 'mcp__questlog__questlog_close', tool_use_id: 't2', session: 'aaaaaa', steps, evidence } as never)
+
+  const partial = await call([{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }], 'all done')
+  expect(String((partial as { result?: string }).result ?? JSON.stringify(partial))).toContain('Tell the team')
+  expect(w.files[`C:/cfg/questlog/${A}.close`]).toBeUndefined()
+
+  await call([{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }])
+  const close = JSON.parse(w.files[`C:/cfg/questlog/${A}.close`])
+  expect(close.steps).toEqual([{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }])
+  expect(close.evidence).toBe('npm test passes; Tell the team: they were on the call')
+})
+
 test('reopening a session keeps its report stamp, so a close against it holds; a new report moves the stamp', async ($, on) => {
   const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'Add checkout', done: 1, total: 2, now: 'b', steps: [{ text: 'a', status: 'done' }, { text: 'b', status: 'now' }], updatedAt: 7, ended: true })
   const w = { ...fresh(), files: { 'C:/cfg/questlog/sess-1.json': row } as Record<string, string> }

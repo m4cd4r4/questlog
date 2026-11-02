@@ -77,7 +77,7 @@ svg { display: block; }
 .s-row { display: flex; align-items: center; gap: 8px; }
 .s-ic { width: 14px; height: 14px; flex: none; display: grid; place-items: center; }
 .s-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.step.done .s-t { color: var(--mute); text-decoration: line-through; text-decoration-color: var(--faint); }
+.step.done .s-t, .step.not.needed .s-t { color: var(--mute); text-decoration: line-through; text-decoration-color: var(--faint); }
 .step.now .s-t { font-weight: 600; }
 .s-more { color: var(--faint); font-size: 11px; }
 .step.open .s-more { color: var(--accent); }
@@ -153,16 +153,18 @@ function pruneState(m) {
   for (const set of [st.seen, st.open]) for (const k of [...set]) if (stale(k)) set.delete(k);
 }
 function stepRow(c, s, key) {
-  const open = st.seen.has(key) ? st.open.has(key) : !!(s.status === "now" && s.detail && c.kind === "session");
+  // A step a close said was not needed opens on its reason
+  const open = st.seen.has(key) ? st.open.has(key) : !!(((s.status === "now" && c.kind === "session") || s.status === "not needed") && s.detail);
   const mark = s.status === "done" ? (() => { const w = h("span", { style: "color:var(--green)" }); w.append(icon("check")); return w; })()
     : s.status === "now" ? h("span", { class: "dot b live" })
     : s.status === "blocked" ? h("span", { class: "dot r", title: "Blocked" })
+    : s.status === "not needed" ? (() => { const w = h("span", { style: "color:var(--faint)" }); w.append(icon("x")); return w; })()
     : (() => { const w = h("span", { style: "color:var(--faint)" }); const svg = document.createElementNS(NS, "svg"); svg.setAttribute("width", 12); svg.setAttribute("height", 12); svg.setAttribute("viewBox", "0 0 12 12"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", 1.4); const ci = document.createElementNS(NS, "circle"); ci.setAttribute("cx", 6); ci.setAttribute("cy", 6); ci.setAttribute("r", 4); svg.append(ci); w.append(svg); return w; })();
   return h("div", {
     class: "step " + s.status + (open ? " open" : ""), "data-d": s.detail ? true : null, tabindex: s.detail ? 0 : null,
     on: { click: () => { if (s.detail) flip(key, open); else if (s.resume) post({ type: "copyResume", text: s.resume }); } },
   },
-    h("div", { class: "s-row" }, h("span", { class: "s-ic" }, mark), h("span", { class: "s-t", title: s.text }, s.text), s.detail ? h("span", { class: "s-more" }, "Details") : null),
+    h("div", { class: "s-row" }, h("span", { class: "s-ic" }, mark), h("span", { class: "s-t", title: s.text }, s.text), s.status === "not needed" ? h("span", { class: "s-more" }, "Not needed") : s.detail ? h("span", { class: "s-more" }, "Details") : null),
     s.detail ? h("div", { class: "detail" }, s.detail, s.resume ? h("div", { style: "margin-top:6px;display:flex;gap:6px" }, h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "copyResume", text: s.resume }); } } }, "Copy resume"), s.worktree ? h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "openWorktree", path: s.worktree }); } } }, "Open worktree") : null) : null) : null);
 }
 function card(c) {
@@ -170,7 +172,7 @@ function card(c) {
   const ckey = "c:" + c.id;
   const expanded = expandable && (st.seen.has(ckey) ? st.open.has(ckey) : c.open);
   const acts = c.kind === "session"
-    ? [act("Open details", "open", { type: "details", id: c.id }), act("Copy session ID", "copy", { type: "copyId", id: c.id }), ...(c.canResume ? [act("Reopen session", "resume", { type: "copySessionResume", id: c.id })] : []), ...(c.closedBy ? [act("Undo close", "undo", { type: "undoClose", id: c.id })] : []), act("Show or hide Questlog panel", "panel", { type: "pane", id: c.id }), act("Hide this session", "x", { type: "dismiss", id: c.id })]
+    ? [act("Open details", "open", { type: "details", id: c.id }), act("Copy session ID", "copy", { type: "copyId", id: c.id }), ...(c.canResume ? [act("Reopen session", "resume", { type: "copySessionResume", id: c.id })] : []), ...(c.closedBy ? [act("Undo close", "undo", { type: "undoClose", id: c.id })] : c.total > 0 && c.done < c.total ? [act("Close", "check", { type: "close", id: c.id })] : []), act("Show or hide Questlog panel", "panel", { type: "pane", id: c.id }), act("Hide this session", "x", { type: "dismiss", id: c.id })]
     : [];
   const meta = c.total > 0
     ? [segments(c), h("span", { class: "cnt" }, c.done + " of " + c.total), c.held ? h("span", { class: "chip amber" }, c.held + " held") : null, c.state === "here" ? h("span", { class: "chip blue" }, "this tab") : null, c.where ? h("span", { class: "chip", title: c.where }, c.where) : null]
@@ -185,7 +187,7 @@ function card(c) {
     h("span", { class: "age" }, c.age),
     h("span", { class: "acts" }, acts),
     h("span", { class: "meta" }, meta),
-    c.closedBy ? h("span", { class: "closedline" }, "Closed by " + c.closedBy.tag + " " + c.closedBy.plan + ": " + c.closedBy.evidence) : null,
+    c.closedBy ? h("span", { class: "closedline" }, "Closed by " + c.closedBy.tag + (c.closedBy.plan ? " " + c.closedBy.plan : "") + (c.closedBy.evidence ? ": " + c.closedBy.evidence : "")) : null,
     !expanded && c.now ? h("span", { class: "nowline", title: c.now }, "\\u2192 " + c.now) : null);
   return [head, expanded ? h("div", { class: "stepsx" }, stepKeys(c).map((key, i) => stepRow(c, c.steps[i], key))) : null];
 }

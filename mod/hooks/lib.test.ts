@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
+import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -253,6 +253,37 @@ test('stepsFromInput keeps a trimmed detail, drops an empty one, and repairs bad
   ])
   expect(stepsFromInput('nope')).toEqual([])
   expect(stepsFromInput([{ text: 'x', status: 'todo', detail: 'y'.repeat(900) }])[0].detail?.length).toBe(400)
+})
+
+test('stepsFromInput keeps a check that names one path as exists or gone, and drops any other shape', () => {
+  const kept = stepsFromInput([
+    { text: 'A', status: 'todo', check: { exists: ' dist/out.vsix ' } },
+    { text: 'B', status: 'todo', check: { gone: 'I:/Scratch/shop-old' } },
+  ])
+  expect(kept.map(s => s.check)).toEqual([{ exists: 'dist/out.vsix' }, { gone: 'I:/Scratch/shop-old' }])
+  const dropped = stepsFromInput([
+    { text: 'C', status: 'todo', check: { exists: 'a', gone: 'b' } },
+    { text: 'D', status: 'todo', check: { exists: '' } },
+    { text: 'E', status: 'todo', check: { run: 'rm -rf /' } },
+    { text: 'F', status: 'todo', check: 'dist/out.vsix' },
+    { text: 'G', status: 'todo', check: { exists: 'a\nb' } },
+    { text: 'H', status: 'done', check: { exists: 'x'.repeat(900) } },
+  ])
+  expect(dropped.map(s => 'check' in s)).toEqual([false, false, false, false, false, false])
+})
+
+test('accountSteps: a close must say of every open step that it is finished or not needed, with why, matched by text', () => {
+  const row: Row = { id: 'aaaaaa00-0', repo: 'shop', where: '', plan: 'Add checkout', done: 1, total: 3, now: '', updatedAt: 5, steps: [{ text: 'Write it', status: 'done' }, { text: 'Test it', status: 'now' }, { text: 'Tell the team', status: 'todo' }] }
+  const ok = accountSteps(row, [{ text: ' test it ', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }, { text: 'Extra', outcome: 'finished', why: 'ignored' }])
+  expect(ok).toEqual({ steps: [{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }, { text: 'Tell the team', outcome: 'not needed', why: 'they were on the call' }] })
+  const missing = accountSteps(row, [{ text: 'Test it', outcome: 'finished', why: 'npm test passes' }]) as { error: string }
+  expect(missing.error).toContain('Tell the team')
+  expect(missing.error).not.toContain('Test it')
+  expect('error' in accountSteps(row, [{ text: 'Test it', outcome: 'finished', why: '' }, { text: 'Tell the team', outcome: 'not needed', why: 'x' }])).toBe(true)
+  expect('error' in accountSteps(row, [{ text: 'Test it', outcome: 'maybe', why: 'y' }, { text: 'Tell the team', outcome: 'not needed', why: 'x' }])).toBe(true)
+  expect('error' in accountSteps(row, 'nope')).toBe(true)
+  // A row from before step lists has nothing to account for
+  expect(accountSteps({ ...row, steps: undefined }, undefined)).toEqual({ steps: [] })
 })
 
 test('filesToMigrate: rows, dismissed list and note, not what the new folder has or the cache', () => {

@@ -47,6 +47,22 @@ test("a close survives the owner's tab reopening, and lapses when the owner repo
   assert.ok(closedAfter({ updatedAt: NOW - 30 * MIN }), "a row with no reportedAt goes by updatedAt");
 });
 
+test("a closed card draws its open steps from the close: finished ones ticked, not-needed ones with their reason, and the count reads whole", () => {
+  const close: Close = {
+    by: "you", byPlan: "", evidence: "Tell the team: the team was on the call", at: NOW - MIN, rowReportedAt: NOW - 30 * MIN,
+    steps: [{ text: "step 2", outcome: "finished", why: "" }, { text: "step 3", outcome: "not needed", why: "the team was on the call" }],
+  };
+  const rows = [session(A, "Add checkout", 1, 3, { closed: close })];
+  const card = buildModel({ rows, plans: [], note: [], now: NOW, live: new Map() }).groups[0].cards[0];
+  assert.equal(card.state, "closed");
+  assert.deepEqual(card.closedBy, { tag: "you", plan: "", evidence: "Tell the team: the team was on the call" });
+  assert.deepEqual([card.done, card.total], [3, 3]);
+  assert.deepEqual(card.steps.map((s) => [s.status, s.text, s.detail]), [["done", "step 1", undefined], ["done", "step 2", undefined], ["not needed", "step 3", "the team was on the call"]]);
+  // A close from before step accounting leaves the steps and count as reported
+  const old = buildModel({ rows: [session(A, "Add checkout", 1, 3, { closed: { ...close, steps: undefined } })], plans: [], note: [], now: NOW, live: new Map() }).groups[0].cards[0];
+  assert.deepEqual([old.done, old.total, old.steps[2].status], [1, 3, "todo"]);
+});
+
 for (const how of ["killed", "cleanly closed"] as const) {
   test(`handoff, A ${how}: A stops reading as open work and names B and the evidence; the others in the folder are untouched`, () => {
     const rows: Row[] = [
