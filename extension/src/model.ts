@@ -131,7 +131,9 @@ export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openT
     return { repo, cards: [...plansForRepo(plans, repo).map(planCard), ...rs.map(card)], ended: (endedGroups.find((g) => g.repo === repo)?.rows ?? []).map(card) };
   });
   const cards = groups.flatMap((g) => g.cards);
-  const sessionCards = cards.filter((c) => c.kind === "session");
+  // A closed card whose tab is gone is listed for its outcome, not counted as a session; one whose tab is still open counts as idle
+  const goneIds = new Set(rows.filter((r) => r.ended || (live !== undefined && !live.get(r.id))).map((r) => r.id));
+  const sessionCards = cards.filter((c) => c.kind === "session" && !(c.state === "closed" && goneIds.has(c.id)));
   const count = (s: CardState) => sessionCards.filter((c) => c.state === s).length;
   return {
     summary: { sessions: sessionCards.length, here: count("here"), running: count("run"), waiting: count("wait"), held: count("held"), idle: count("idle") + count("closed") },

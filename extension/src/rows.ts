@@ -252,7 +252,8 @@ export const noteLines = (text: string) =>
 
 /** Status bar text for this window's session. */
 export const statusText = (r: Row) => {
-  const stage = r.total > 0 ? `${r.done}/${r.total} ` : "";
+  // A close accounts for every open step, so a closed row reads whole here as on its card
+  const stage = r.total > 0 ? `${r.closed ? r.total : r.done}/${r.total} ` : "";
   const now = r.now ? ` · ${cut(r.now, 32)}` : "";
   return `${stage}${cut(planOf(r), 36)}${now}`;
 };

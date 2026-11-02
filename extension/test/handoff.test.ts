@@ -30,6 +30,14 @@ test("a tab closed with steps left waits behind its repo's collapsed line for a 
   assert.equal(m.groups[0].ended[0].canResume, true);
 });
 
+test("a closed card for a tab that is gone shows in the list but is not counted as a session", () => {
+  const close: Close = { by: "you", byPlan: "", evidence: "step 2: done elsewhere", at: NOW - MIN, rowReportedAt: NOW - 30 * MIN, steps: [{ text: "step 2", outcome: "finished", why: "" }] };
+  const rows = [session(A, "Add checkout", 1, 2, { ended: true, closed: close })];
+  const m = buildModel({ rows, plans: [], note: [], now: NOW, live: new Map() });
+  assert.equal(m.groups[0].cards[0]?.state, "closed");
+  assert.deepEqual([m.summary.sessions, m.summary.idle], [0, 0]);
+});
+
 test("a stopped session that was partway through a turn says interrupted, one between turns says unfinished", () => {
   const rows = [session(A, "Mid turn", 1, 3, { inTurn: true }), session(B, "Between turns", 1, 3)];
   const cards = buildModel({ rows, plans: [], note: [], now: NOW, live: new Map() }).groups.flatMap((g) => g.cards);
