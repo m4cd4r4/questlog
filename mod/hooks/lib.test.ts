@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
+import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sameReport, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -20,6 +20,16 @@ test('pickCard: three sessions in one folder, only an ID or tag that fits one ca
   for (const refused of ['aaaaaa', 'Same plan', 'cccccc', 'dddddd', 'eeeeee', '', 'bbb', 'ffffff']) expect('error' in pick(refused)).toBe(true)
   expect((pick('') as { error: string }).error).toContain('bbbbbb Other 1/3')
   expect((pick('') as { error: string }).error).not.toContain('dddddd')
+})
+
+test('sameReport: the same plan and steps restated is no new report; a status, text, detail or check change is', () => {
+  const steps = [{ text: 'a', status: 'done' as const }, { text: 'b', status: 'now' as const, detail: 'd' }]
+  expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: steps.map(s => ({ ...s })) })).toBe(true)
+  expect(sameReport({ plan: 'P', steps }, { plan: 'Q', steps })).toBe(false)
+  expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0], { ...steps[1], status: 'done' }] })).toBe(false)
+  expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0], { ...steps[1], detail: 'e' }] })).toBe(false)
+  expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0], { ...steps[1], check: { exists: 'x' } }] })).toBe(false)
+  expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0]] })).toBe(false)
 })
 
 test('turnEndNudge: only a turn that ran tools since its report, with steps left, and never twice in a row', () => {

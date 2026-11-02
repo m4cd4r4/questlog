@@ -179,6 +179,23 @@ test('reopening a session keeps its report stamp, so a close against it holds; a
   expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).not.toBe(7)
 })
 
+test('restating the same list after reopening is no report: a close another session made against the row holds', async ($, on) => {
+  const steps = [{ text: 'a', status: 'done' }, { text: 'b', status: 'now' }]
+  const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'Add checkout', done: 1, total: 2, now: 'b', steps, updatedAt: 7, reportedAt: 7, ended: true })
+  const close = JSON.stringify({ by: 'bbbbbbbb-0000-4000-8000-000000000000', byPlan: 'Other', evidence: 'npm test passes', at: 9, rowReportedAt: 7, steps: [{ text: 'b', outcome: 'finished', why: 'npm test passes' }] })
+  const w = { ...fresh(), files: { 'C:/cfg/questlog/sess-1.json': row, 'C:/cfg/questlog/sess-1.close': close } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  // The Stop nudge after a Grep: the model restates the list it has
+  await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't1', plan: 'Add checkout', steps } as never)
+  expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).toBe(7)
+  // A step moved: that is news, and the close lapses
+  await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't2', plan: 'Add checkout', steps: [steps[0], { text: 'b', status: 'done' }] } as never)
+  expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).not.toBe(7)
+})
+
 test('a plan name taken from a written plan file is bookkeeping, not a report: the stamp stays', async ($, on) => {
   // A row with a plan and no steps restores as a topic, with its stamp; the written heading then names the plan
   const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'First prompt', done: 0, total: 0, now: '', steps: [], updatedAt: 7, ended: true })
