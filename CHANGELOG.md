@@ -16,6 +16,10 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 - At the end of a turn that ran tools, Claude reports its steps once more, so the card's count is current.
 
 ### Fixed
+- A closed card stays closed when its session is reopened and only restates its steps. Reporting the same plan and step list no longer counts as news; a step that moves still brings the card back.
+- Closing a card from the panel while another session closes it first leaves that close in place and says so, instead of writing over it.
+- A card whose session is waiting on you now keeps the close it carries, with Undo close, instead of offering a second Close that refuses.
+- A session from before step lists shows its own count again. It read 0 of N after the close accounting change.
 - A session whose Claude process has ended now gets the play button straight away, from any window. It used to show as unfinished with no button for up to 6 hours if its folder wasn't open.
 - The pane check no longer writes a log line every 2 seconds per session.
 

@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Questlog, Step } from '../types'
 import {
   CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
-  stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
+  sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
 
@@ -37,11 +37,14 @@ let showStatus = true
 let tagMode: TagMode = 'clash'
 
 // Everything that writes state goes through here: title source, pane, status, shared file.
-// Only the questlog tool is a report (moves reportedAt, so a close against the row lapses); every other save is bookkeeping
+// Only the questlog tool is a report (moves reportedAt, so a close against the row lapses); every other save is bookkeeping.
+// A report that changes nothing keeps the stamp: the Stop nudge makes a reopened session restate its list, and that
+// restatement must not lapse a close another session made against it (lib.ts sameReport)
 async function save($: EngineInterface, change: (c: Questlog) => Questlog, report = false) {
   const before = await read($, questlog)
   const stamp = await $.clock.now()
-  const after = { ...change(before), updatedAt: stamp, ...(report ? { reportedAt: stamp } : {}) }
+  const changed = change(before)
+  const after = { ...changed, updatedAt: stamp, ...(report && !sameReport(before, changed) ? { reportedAt: stamp } : {}) }
   await update($, questlog, () => after)
   if (showStatus) $.ui.status(statusText(after))
   const { total } = stage(after.steps)

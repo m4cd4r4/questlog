@@ -275,6 +275,11 @@ export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => {
   return !!c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt)
 }
 
+// Whether a report restates the plan and steps as they already stand: the texts, statuses, details and checks, in order
+export const sameReport = (a: Pick<Questlog, 'plan' | 'steps'>, b: Pick<Questlog, 'plan' | 'steps'>) =>
+  a.plan === b.plan && a.steps.length === b.steps.length &&
+  a.steps.every((s, i) => JSON.stringify([s.text, s.status, s.detail ?? '', s.check ?? null]) === JSON.stringify([b.steps[i].text, b.steps[i].status, b.steps[i].detail ?? '', b.steps[i].check ?? null]))
+
 // What stops a turn that ran tools after its last report, so the card's count is current. Once per stop:
 // stop_hook_active is the model answering this, and a plan with nothing left has nothing to correct
 export const turnEndNudge = (steps: readonly Step[], toolsSinceReport: number, stopHookActive: boolean) =>

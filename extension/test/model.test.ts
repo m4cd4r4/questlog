@@ -153,3 +153,29 @@ test("parseMessage takes copySessionResume with a session ID only", () => {
   assert.deepEqual(parseMessage({ type: "copySessionResume", id: "a" }), { type: "copySessionResume", id: "a" });
   assert.equal(parseMessage({ type: "copySessionResume" }), undefined);
 });
+
+const aClose = { by: "bbbbbbbb-0000-4000-8000-000000000000", byPlan: "Other", evidence: "npm test passes", at: NOW, rowReportedAt: NOW, steps: [{ text: "b", outcome: "finished" as const, why: "npm test passes" }] };
+
+test("buildModel keeps the session's own count for a row with only a now line (no step list, no close)", () => {
+  const [c] = buildModel(input([row({ id: "a", total: 3, done: 2, now: "write tests" })])).groups[0].cards;
+  assert.equal(c.done, 2);
+  assert.equal(c.steps.length, 1);
+});
+
+test("buildModel counts a closed card whole, and names the close", () => {
+  const steps = [{ status: "done" as const, text: "a" }, { status: "now" as const, text: "b" }];
+  const [c] = buildModel(input([row({ id: "a", total: 2, done: 1, steps, closed: aClose })])).groups[0].cards;
+  assert.equal(c.state, "closed");
+  assert.equal(c.done, 2);
+  assert.equal(c.closedBy?.tag, "bbbbbb");
+  assert.equal(c.steps[1].status, "done");
+});
+
+test("buildModel shows a closed card whose session is waiting as needs-you, still naming the close so it can be undone", () => {
+  const steps = [{ status: "done" as const, text: "a" }, { status: "now" as const, text: "b" }];
+  const [c] = withLive([row({ id: "a", total: 2, done: 1, steps, closed: aClose })], new Map([["a", { status: "waiting", waitingFor: "permission prompt" }]]));
+  assert.equal(c.state, "wait");
+  assert.equal(c.now, "Needs you: permission prompt");
+  assert.equal(c.closedBy?.tag, "bbbbbb");
+  assert.doesNotMatch(c.age, /^closed/);
+});

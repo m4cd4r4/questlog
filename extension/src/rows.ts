@@ -99,6 +99,18 @@ export const closeByHand = (r: Row, steps: readonly CloseStep[], nowMs: number):
   by: CLOSED_BY_HAND, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt: r.reportedAt ?? r.updatedAt, steps: [...steps],
 });
 
+/**
+ * Why a close made by hand must not be written: the row's session reported while the prompts were up, or another
+ * session (or a check) closed it meanwhile. `latest` and `close` are read from disk after the prompts, not from the
+ * rows the prompts began with. Undefined when the close may go ahead.
+ */
+export const handCloseBlocked = (row: Row, latest: Row | undefined, close: Close | undefined): string | undefined => {
+  const at = row.reportedAt ?? row.updatedAt;
+  if (!latest || (latest.reportedAt ?? latest.updatedAt) !== at) return "Nothing closed: the session reported again meanwhile. Check its card.";
+  if (close && !close.undone && close.rowReportedAt === at) return `Nothing closed: ${close.by === CLOSED_BY_HAND ? "you" : close.by === CLOSED_BY_CHECK ? "a step check" : close.by.slice(0, 6)} closed it meanwhile. Check its card.`;
+  return undefined;
+};
+
 export const STALE_MS = 6 * 60 * 60 * 1000;
 /** A finished session older than this is dropped from the view. */
 export const GONE_MS = 24 * 60 * 60 * 1000;

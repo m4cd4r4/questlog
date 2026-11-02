@@ -73,10 +73,11 @@ const sessionCard = (r: Row, now: number, focusedId?: string, openTags: Readonly
   const here = r.id === focusedId && !stale;
   const waiting = lv?.status === "waiting" && !isFinished(r);
   const steps = stepsOf(r);
-  // A session still waiting on the person says so even when closed; the close lapses if it updates again
-  const closed = r.closed && !waiting ? r.closed : undefined;
+  const closed = r.closed;
+  // A session still waiting on the person says so even when closed, and the card still names the close (so it can be
+  // undone from here, and no second Close is offered); the close lapses if the session reports again.
   // A stale session with work left is unfinished (its window was probably closed); a stale finished one is just idle
-  const state: CardState = closed ? "closed" : stale ? (hasWorkLeft(r) ? "held" : "idle") : isFinished(r) ? "done" : here ? "here" : waiting ? "wait" : "run";
+  const state: CardState = closed && !waiting ? "closed" : stale ? (hasWorkLeft(r) ? "held" : "idle") : isFinished(r) ? "done" : here ? "here" : waiting ? "wait" : "run";
   const where = r.where || (r.branch && r.branch !== "main" && r.branch !== "master" ? r.branch : "");
   const cardSteps = closedSteps(steps, closed);
   return {
@@ -84,13 +85,14 @@ const sessionCard = (r: Row, now: number, focusedId?: string, openTags: Readonly
     kind: "session",
     title: planOf(r),
     state,
-    age: closed ? `closed ${ago(now - closed.at)}` : stale ? `${state === "held" ? (r.inTurn ? "interrupted" : "unfinished") : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
-    // Every step a close accounted for counts, so a closed card reads whole (statusText agrees)
-    done: cardSteps.length > 0 ? cardSteps.filter((s) => s.status === "done" || s.status === "not needed").length : r.done,
+    age: closed && !waiting ? `closed ${ago(now - closed.at)}` : stale ? `${state === "held" ? (r.inTurn ? "interrupted" : "unfinished") : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
+    // Every step a close accounted for counts, so a closed card reads whole (statusText agrees); otherwise the count is
+    // the session's own, since a row from before step lists carries one "now" line and would read 0 if recounted
+    done: closed?.steps?.length ? cardSteps.filter((s) => s.status === "done" || s.status === "not needed").length : r.done,
     total: r.total,
     held: 0,
     where,
-    now: stale || closed ? "" : waiting ? `Needs you: ${lv?.waitingFor ?? "waiting"}` : steps.find((s) => s.status === "now")?.text ?? r.now,
+    now: stale || (closed && !waiting) ? "" : waiting ? `Needs you: ${lv?.waitingFor ?? "waiting"}` : steps.find((s) => s.status === "now")?.text ?? r.now,
     steps: cardSteps,
     open: here && steps.length > 0,
     canResume: canResume(r, now, openTags, folders, gone),

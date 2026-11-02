@@ -14,7 +14,7 @@ import {
 } from "./plans";
 import {
   bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
-  canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
+  canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, handCloseBlocked, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
   sessionIdFromArg, statusText, stepsOf, visibleRows, type Group, type Row, type Step,
 } from "./rows";
 
@@ -380,9 +380,11 @@ export function activate(context: vscode.ExtensionContext) {
       }
       steps.push({ text: s.text, outcome: pick === "Finished" ? "finished" : "not needed", why });
     }
-    // The session may have reported while the prompts were up: a close against the old report would be ignored without a word
-    const latest = tree.rows.find((x) => x.id === id);
-    if (!latest || (latest.reportedAt ?? latest.updatedAt) !== (row.reportedAt ?? row.updatedAt)) return void vscode.window.showInformationMessage("Nothing closed: the session reported again meanwhile. Check its card.");
+    // The session may have reported, or another session closed the card, while the prompts were up: read the disk,
+    // not tree.rows (the watcher may not have fired yet), so neither is overwritten without a word
+    const fresh = readRows();
+    const blocked = handCloseBlocked(row, fresh.rows.find((x) => x.id === id), fresh.closes.get(id));
+    if (blocked) return void vscode.window.showInformationMessage(blocked);
     writeClose(row.id, closeByHand(row, steps, Date.now()));
     update();
   }

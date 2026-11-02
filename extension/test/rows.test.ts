@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   COPY_ID_COMMAND, GONE_MS, PANE_COMMAND, PARKED_MS, ago, dismissedFrom, paneLink, paneOpenOf, STALE_MS, bar, copyIdLink, sessionIdFromArg, description, groupByRepo, isRow, isSessionTab, noteLines, rowForTab, rowForWorkspace, statusText, stepsOf, visibleRows,
-  canResume, inOpenFolder, resumeCommandOf, sessionTagOf, type Row,
+  canResume, handCloseBlocked, inOpenFolder, resumeCommandOf, sessionTagOf, type Row,
 } from "../src/rows.ts";
 
 const NOW = 10 * GONE_MS;
@@ -243,4 +243,16 @@ test("inOpenFolder matches a row's folder to an open one exactly, ignoring slash
   assert.equal(inOpenFolder("D:/code/demo-shop/app", ["D:/code/demo-shop"]), false);
   assert.equal(inOpenFolder("D:/code/other", ["D:/code/demo-shop"]), false);
   assert.equal(inOpenFolder("D:/code/demo-shop", []), false);
+});
+
+test("handCloseBlocked: a report or another close made while the prompts were up stops the hand close; an undone close does not", () => {
+  const r = row({ id: "a", total: 2, done: 1, reportedAt: 5 });
+  const close = { by: "bbbbbbbb-0000-4000-8000-000000000000", byPlan: "", evidence: "done", at: NOW, rowReportedAt: 5 };
+  assert.equal(handCloseBlocked(r, r, undefined), undefined);
+  assert.match(handCloseBlocked(r, undefined, undefined)!, /reported again/);
+  assert.match(handCloseBlocked(r, { ...r, reportedAt: 6 }, undefined)!, /reported again/);
+  assert.match(handCloseBlocked(r, r, close)!, /bbbbbb closed it meanwhile/);
+  assert.match(handCloseBlocked(r, r, { ...close, by: "check" })!, /a step check closed it/);
+  assert.equal(handCloseBlocked(r, r, { ...close, undone: true }), undefined);
+  assert.equal(handCloseBlocked(r, r, { ...close, rowReportedAt: 4 }), undefined);
 });
