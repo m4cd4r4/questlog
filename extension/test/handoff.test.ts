@@ -17,6 +17,27 @@ const C = "cccccccc-0000-4000-8000-000000000003";
 const D = "dddddddd-0000-4000-8000-000000000004";
 const EVIDENCE = "Worktree removed; git worktree list no longer shows it";
 
+test("a tab closed with steps left waits behind its repo's collapsed line for a day, outside the counts, unless a close or /clear accounts for it", () => {
+  const rows: Row[] = [
+    session(A, "Add checkout", 1, 3, { ended: true }),
+    session(B, "Old work", 1, 3, { ended: true, updatedAt: NOW - 2 * GONE_MS }),
+    session(C, "Carried on", 1, 3, { ended: true, continuedIn: D }),
+    session(D, "All done", 3, 3, { ended: true }),
+  ];
+  const m = buildModel({ rows, plans: [], note: [], now: NOW, live: new Map() });
+  assert.deepEqual(m.groups.map((g) => [g.repo, g.cards.length, g.ended.map((c) => c.id)]), [["shop", 0, [A]]]);
+  assert.equal(m.summary.sessions, 0);
+  assert.equal(m.groups[0].ended[0].canResume, true);
+});
+
+test("a stopped session that was partway through a turn says interrupted, one between turns says unfinished", () => {
+  const rows = [session(A, "Mid turn", 1, 3, { inTurn: true }), session(B, "Between turns", 1, 3)];
+  const cards = buildModel({ rows, plans: [], note: [], now: NOW, live: new Map() }).groups.flatMap((g) => g.cards);
+  assert.match(cards.find((c) => c.id === A)!.age, /^interrupted /);
+  assert.match(cards.find((c) => c.id === B)!.age, /^unfinished /);
+  assert.equal(cards.find((c) => c.id === A)!.state, "held");
+});
+
 for (const how of ["killed", "cleanly closed"] as const) {
   test(`handoff, A ${how}: A stops reading as open work and names B and the evidence; the others in the folder are untouched`, () => {
     const rows: Row[] = [

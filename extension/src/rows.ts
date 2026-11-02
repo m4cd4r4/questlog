@@ -19,7 +19,35 @@ export type Row = {
   cwd?: string;
   /** The tab title the mod last set; the active tab's label is matched to it. */
   title?: string;
+  /** Another session closed this card. Joined from `<id>.close` by withCloses; never stored in the row. */
+  closed?: Close;
+  /** The session stopped partway through a turn. */
+  inTurn?: boolean;
+  /** /clear moved this session's process to another session ID. */
+  continuedIn?: string;
 };
+
+/** Written by the session that closed the card (mod lib.ts closeOf). The row's owner never writes it, so neither can overwrite the other. */
+export type Close = { by: string; byPlan: string; evidence: string; at: number; rowUpdatedAt: number };
+
+/** `<session id>.close` beside the rows: not a .json file, so nothing reads one as a row. */
+export const CLOSE_EXT = ".close";
+
+export const closeFrom = (text: string): Close | undefined => {
+  try {
+    const c = JSON.parse(text) as Close;
+    return typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowUpdatedAt === "number" ? c : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** A close holds only for the row it was made against: a session that updates again comes back, like a hidden one. */
+export const withCloses = (rows: readonly Row[], closes: ReadonlyMap<string, Close>): Row[] =>
+  rows.map((r) => {
+    const c = closes.get(r.id);
+    return c && c.rowUpdatedAt === r.updatedAt ? { ...r, closed: c } : r;
+  });
 
 export const STALE_MS = 6 * 60 * 60 * 1000;
 /** A finished session older than this is dropped from the view. */
@@ -37,7 +65,7 @@ export const isStale = (r: Row, nowMs: number) => nowMs - r.updatedAt >= STALE_M
 export const isFinished = (r: Row) => r.total > 0 && r.done === r.total;
 
 /** Has a step list with work left. A session with no steps yet is never paused: it drops at GONE_MS like a finished one. */
-export const hasWorkLeft = (r: Row) => r.total > 0 && r.done < r.total;
+export const hasWorkLeft = (r: Row) => r.total > 0 && r.done < r.total && !r.closed;
 
 /** Hidden by hand: session id to the updatedAt it was hidden at, so a session that updates again comes back. */
 export type Dismissed = Record<string, number>;
@@ -56,16 +84,23 @@ export const dismissedFrom = (text: string): Dismissed => {
  * Live, paused and recently finished rows, newest first. Dropped: ended, hidden by hand, finished ones a
  * day old, unfinished ones a week old, and sessions that never got a message or a plan (the mod's plan
  * falls back to the first message, so an empty plan with no steps is a window that was opened and left).
+ * A card another session closed stays a day from the close, ended or not, so a wrong close can be seen.
  */
 export const visibleRows = (rows: readonly Row[], nowMs: number, dismissed: Dismissed = {}) =>
   rows
     .filter(
       (r) =>
-        !r.ended &&
+        (!r.ended || r.closed) &&
         dismissed[r.id] !== r.updatedAt &&
-        nowMs - r.updatedAt < (hasWorkLeft(r) ? PARKED_MS : GONE_MS) &&
+        nowMs - (r.closed?.at ?? r.updatedAt) < (hasWorkLeft(r) ? PARKED_MS : GONE_MS) &&
         (r.plan || r.total > 0),
     )
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+
+/** Tabs closed with steps left in the last day, newest first. A close or a /clear already says where the work went. */
+export const endedRows = (rows: readonly Row[], nowMs: number, dismissed: Dismissed = {}) =>
+  rows
+    .filter((r) => r.ended && hasWorkLeft(r) && !r.continuedIn && dismissed[r.id] !== r.updatedAt && nowMs - r.updatedAt < GONE_MS)
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
 export type Group = { repo: string; rows: Row[] };
@@ -128,7 +163,7 @@ const inside = (path: string, folder: string) => {
  * guess lets a click toggle the wrong session's pane.
  */
 export const rowForWorkspace = (rows: readonly Row[], folders: readonly string[], nowMs: number): Row | undefined => {
-  const live = visibleRows(rows, nowMs).filter((r) => !isStale(r, nowMs));
+  const live = visibleRows(rows, nowMs).filter((r) => !isStale(r, nowMs) && !r.ended && !r.closed);
   const byCwd = live.filter((r) => r.cwd && folders.some((f) => inside(r.cwd!, f)));
   if (byCwd.length > 0) return byCwd.length === 1 ? byCwd[0] : undefined;
   const names = folders.map((f) => norm(f).split("/").pop());
@@ -146,7 +181,7 @@ export const rowForTab = (rows: readonly Row[], label: string, nowMs: number): R
   if (!l || cutAt === "") return undefined;
   return visibleRows(rows, nowMs).find((r) => {
     const t = r.title?.trim();
-    if (!t) return false;
+    if (!t || r.ended) return false;
     return cutAt === undefined ? t === l : t === l || t.startsWith(cutAt);
   });
 };

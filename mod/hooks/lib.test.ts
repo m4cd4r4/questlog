@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, filesToMigrate, stepsFromInput, noteContext, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, whereFromGit } from './lib'
+import { EMPTY, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -9,6 +9,27 @@ const steps = [
   { text: 'Pane render', status: 'now' as const },
   { text: 'Tests', status: 'todo' as const },
 ]
+
+test('pickCard: three sessions in one folder, only an ID or tag that fits one card in this repo picks it, never a plan name', () => {
+  const card = (id: string, plan: string, repo = 'shop', done = 1): Row => ({ id, repo, where: '', plan, done, total: 3, now: '', updatedAt: 5, cwd: '/work/shop' })
+  const rows = [card('aaaaaa01-0', 'Same plan'), card('aaaaaa02-0', 'Same plan'), card('bbbbbb00-0', 'Other'), card('cccccc00-0', 'Self'), card('dddddd00-0', 'Elsewhere', 'blog'), card('eeeeee00-0', 'Done', 'shop', 3)]
+  const pick = (s: string) => pickCard(rows, 'cccccc00-0', 'shop', s)
+  expect(pick('bbbbbb')).toEqual({ row: rows[2] })
+  expect(pick('bbbbbb00-0')).toEqual({ row: rows[2] })
+  expect(pick('aaaaaa01')).toEqual({ row: rows[0] })
+  for (const refused of ['aaaaaa', 'Same plan', 'cccccc', 'dddddd', 'eeeeee', '', 'bbb', 'ffffff']) expect('error' in pick(refused)).toBe(true)
+  expect((pick('') as { error: string }).error).toContain('bbbbbb Other 1/3')
+  expect((pick('') as { error: string }).error).not.toContain('dddddd')
+})
+
+test('turnEndNudge: only a turn that ran tools since its report, with steps left, and never twice in a row', () => {
+  const left = [{ text: 'a', status: 'done' as const }, { text: 'b', status: 'now' as const }]
+  expect(turnEndNudge(left, 3, false)).toContain('questlog')
+  expect(turnEndNudge(left, 0, false)).toBe('')
+  expect(turnEndNudge(left, 3, true)).toBe('')
+  expect(turnEndNudge([{ text: 'a', status: 'done' }], 3, false)).toBe('')
+  expect(turnEndNudge([], 3, false)).toBe('')
+})
 
 test('title: repo, worktree slug, plan and stage', () => {
   const t = title({ ...EMPTY, repo: 'myapp', branch: 'feat/x', slug: 'feature-x', plan: 'Pricing wave 3', steps })

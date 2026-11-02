@@ -1,10 +1,10 @@
 // Pure view model for the webview: no vscode import, so node --test runs it directly.
-import { ago, canResume, groupByRepo, hasWorkLeft, isFinished, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
+import { ago, canResume, endedRows, groupByRepo, hasWorkLeft, isFinished, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
 import { openSlices, plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
 
 import type { LiveState } from "./live.ts";
 
-export type CardState = "here" | "run" | "wait" | "idle" | "done" | "held";
+export type CardState = "here" | "run" | "wait" | "idle" | "done" | "held" | "closed";
 
 export type CardStep = { status: Step["status"] | "blocked"; text: string; detail?: string; resume?: string; worktree?: string };
 
@@ -26,9 +26,12 @@ export type Card = {
   open: boolean;
   /** A paused session the host can build a resume command for; the command itself never travels to the page. */
   canResume: boolean;
+  /** Another session closed this card: who, and the evidence it gave. */
+  closedBy?: { tag: string; plan: string; evidence: string };
 };
 
-export type GroupModel = { repo: string; cards: Card[] };
+/** `ended`: tabs closed with steps left, drawn behind one collapsed line and left out of the summary. */
+export type GroupModel = { repo: string; cards: Card[]; ended: Card[] };
 
 export type Summary = { sessions: number; here: number; running: number; waiting: number; held: number; idle: number };
 
@@ -54,28 +57,31 @@ export type ModelInput = {
 const sessionCard = (r: Row, now: number, focusedId?: string, openTags: ReadonlySet<string> = new Set(), folders: readonly string[] = [], live?: ReadonlyMap<string, LiveState>): Card => {
   const lv = live?.get(r.id);
   // The list was read and holds no process for this session: its window is closed, however recent its last update
-  const closed = live !== undefined && !lv;
-  const stale = isStale(r, now) || closed;
+  const gone = r.ended || (live !== undefined && !lv);
+  const stale = isStale(r, now) || gone;
   const here = r.id === focusedId && !stale;
   const waiting = lv?.status === "waiting" && !isFinished(r);
   const steps = stepsOf(r);
+  // A session still waiting on the person says so even when closed; the close lapses if it updates again
+  const closed = r.closed && !waiting ? r.closed : undefined;
   // A stale session with work left is unfinished (its window was probably closed); a stale finished one is just idle
-  const state: CardState = stale ? (hasWorkLeft(r) ? "held" : "idle") : isFinished(r) ? "done" : here ? "here" : waiting ? "wait" : "run";
+  const state: CardState = closed ? "closed" : stale ? (hasWorkLeft(r) ? "held" : "idle") : isFinished(r) ? "done" : here ? "here" : waiting ? "wait" : "run";
   const where = r.where || (r.branch && r.branch !== "main" && r.branch !== "master" ? r.branch : "");
   return {
     id: r.id,
     kind: "session",
     title: planOf(r),
     state,
-    age: stale ? `${state === "held" ? "unfinished" : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
+    age: closed ? `closed ${ago(now - closed.at)}` : stale ? `${state === "held" ? (r.inTurn ? "interrupted" : "unfinished") : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
     done: r.done,
     total: r.total,
     held: 0,
     where,
-    now: stale ? "" : waiting ? `Needs you: ${lv?.waitingFor ?? "waiting"}` : steps.find((s) => s.status === "now")?.text ?? r.now,
+    now: stale || closed ? "" : waiting ? `Needs you: ${lv?.waitingFor ?? "waiting"}` : steps.find((s) => s.status === "now")?.text ?? r.now,
     steps: steps.map((s) => ({ status: s.status, text: s.text, detail: s.detail })),
     open: here && steps.length > 0,
-    canResume: canResume(r, now, openTags, folders, closed),
+    canResume: canResume(r, now, openTags, folders, gone),
+    ...(closed ? { closedBy: { tag: closed.by.replace(/-/g, "").slice(0, 6).toLowerCase(), plan: closed.byPlan, evidence: closed.evidence } } : {}),
   };
 };
 
@@ -103,16 +109,19 @@ const planCard = (p: ParentPlan): Card => {
 export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live }: ModelInput): ViewModel => {
   const visible = visibleRows(rows, now, dismissed);
   const sessionGroups = groupByRepo(visible);
-  const repos = [...sessionGroups.map((g) => g.repo), ...planOnlyRepos(plans, sessionGroups.map((g) => g.repo))];
+  const endedGroups = groupByRepo(endedRows(rows, now, dismissed));
+  const named = [...sessionGroups.map((g) => g.repo), ...endedGroups.map((g) => g.repo).filter((r) => !sessionGroups.some((g) => g.repo === r))];
+  const repos = [...named, ...planOnlyRepos(plans, named)];
+  const card = (r: Row) => sessionCard(r, now, focusedId, openTags, folders, live);
   const groups: GroupModel[] = repos.map((repo) => {
     const rs = sessionGroups.find((g) => g.repo === repo)?.rows ?? [];
-    return { repo, cards: [...plansForRepo(plans, repo).map(planCard), ...rs.map((r) => sessionCard(r, now, focusedId, openTags, folders, live))] };
+    return { repo, cards: [...plansForRepo(plans, repo).map(planCard), ...rs.map(card)], ended: (endedGroups.find((g) => g.repo === repo)?.rows ?? []).map(card) };
   });
   const cards = groups.flatMap((g) => g.cards);
   const sessionCards = cards.filter((c) => c.kind === "session");
   const count = (s: CardState) => sessionCards.filter((c) => c.state === s).length;
   return {
-    summary: { sessions: sessionCards.length, here: count("here"), running: count("run"), waiting: count("wait"), held: count("held"), idle: count("idle") },
+    summary: { sessions: sessionCards.length, here: count("here"), running: count("run"), waiting: count("wait"), held: count("held"), idle: count("idle") + count("closed") },
     groups,
     note: [...note],
   };
@@ -127,6 +136,7 @@ export type WebMessage =
   | { type: "copySessionResume"; id: string }
   | { type: "dismiss"; id: string }
   | { type: "pane"; id: string }
+  | { type: "undoClose"; id: string }
   | { type: "copyResume"; text: string }
   | { type: "openWorktree"; path: string }
   | { type: "openNote" };
@@ -144,6 +154,7 @@ export const parseMessage = (v: unknown): WebMessage | undefined => {
     case "copyId":
     case "copySessionResume":
     case "dismiss":
+    case "undoClose":
     case "pane": {
       const id = str(m.id);
       return id ? { type: m.type, id } : undefined;

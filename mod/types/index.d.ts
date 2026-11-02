@@ -12,6 +12,8 @@ export type Questlog = {
   shownTitle?: string
   // The plan or topic the session tag was added under; a new name drops the tag unless it clashes too
   taggedName?: string
+  // A prompt is being worked on; still set in the row of a session that died mid-turn
+  inTurn?: boolean
 }
 
 declare module 'claude-code' {

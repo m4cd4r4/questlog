@@ -17,7 +17,7 @@ body.vscode-light { --accent: #b9603f; --accent-ink: #8a3f22; }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 0 0 12px; color: var(--ink); font: 13px/1.4 var(--vscode-font-family); background: transparent; }
 button { font: inherit; color: inherit; }
-button:focus-visible, .card:focus-visible, .grp:focus-visible, .sec:focus-visible, .step:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+button:focus-visible, .card:focus-visible, .grp:focus-visible, .sec:focus-visible, .step:focus-visible, .endedline:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 svg { display: block; }
 .grow { flex: 1; }
 .ib { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--mute); border: 0; background: none; cursor: pointer; padding: 0; }
@@ -49,6 +49,9 @@ svg { display: block; }
 .card:hover .age, .card:focus-within .age { display: none; }
 .card:hover .acts, .card:focus-within .acts { display: flex; }
 .card .nowline { grid-column: 2 / 4; color: var(--faint); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .closedline { grid-column: 2 / 4; color: var(--mute); font-size: 12px; overflow-wrap: anywhere; }
+.endedline { display: flex; align-items: center; gap: 4px; padding: 5px 12px 5px 16px; color: var(--mute); font-size: 12px; cursor: pointer; user-select: none; }
+.endedline:hover { background: var(--hover); }
 .card .meta { grid-column: 2 / 4; display: flex; align-items: center; gap: 8px; color: var(--mute); font-size: 12px; min-width: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
 .dot.g { background: var(--green); } .dot.a { background: var(--amber); } .dot.b { background: var(--blue); } .dot.r { background: var(--red); }
@@ -98,6 +101,7 @@ const ICONS = {
   copy: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7",
   panel: "M2.5 3h11v10h-11zM2.5 9.5h11",
   resume: "M5 3.5v9l7.5-4.5z",
+  undo: "M5.5 3L2.5 6l3 3M2.5 6h6.5a3.5 3.5 0 0 1 0 7H6",
   refresh: "M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3",
   check: "M2.5 6.5l2.3 2.3 4.7-5",
   x: "M4 4l8 8M12 4l-8 8",
@@ -124,7 +128,7 @@ function h(tag, props, ...kids) {
   return el;
 }
 const post = (m) => vscode.postMessage(m);
-const DOT = { here: "b live", run: "g live", wait: "r live", held: "a", idle: "", done: "g" };
+const DOT = { here: "b live", run: "g live", wait: "r live", held: "a", idle: "", done: "g", closed: "g" };
 
 function toggle(set, key) { set.has(key) ? set.delete(key) : set.add(key); persist(); draw(); }
 // A row opened by default stays that way until the person touches it; after that their choice wins
@@ -144,7 +148,7 @@ function stepKeys(c) {
 }
 function pruneState(m) {
   const live = new Set();
-  for (const g of m.groups) for (const c of g.cards) { live.add("c:" + c.id); for (const k of stepKeys(c)) live.add(k); }
+  for (const g of m.groups) for (const c of [...g.cards, ...(g.ended || [])]) { live.add("c:" + c.id); for (const k of stepKeys(c)) live.add(k); }
   const stale = (k) => (k.startsWith("c:") || k.startsWith("s:")) && !live.has(k);
   for (const set of [st.seen, st.open]) for (const k of [...set]) if (stale(k)) set.delete(k);
 }
@@ -166,7 +170,7 @@ function card(c) {
   const ckey = "c:" + c.id;
   const expanded = expandable && (st.seen.has(ckey) ? st.open.has(ckey) : c.open);
   const acts = c.kind === "session"
-    ? [act("Open details", "open", { type: "details", id: c.id }), act("Copy session ID", "copy", { type: "copyId", id: c.id }), ...(c.canResume ? [act("Reopen session", "resume", { type: "copySessionResume", id: c.id })] : []), act("Show or hide Questlog panel", "panel", { type: "pane", id: c.id }), act("Hide this session", "x", { type: "dismiss", id: c.id })]
+    ? [act("Open details", "open", { type: "details", id: c.id }), act("Copy session ID", "copy", { type: "copyId", id: c.id }), ...(c.canResume ? [act("Reopen session", "resume", { type: "copySessionResume", id: c.id })] : []), ...(c.closedBy ? [act("Undo close", "undo", { type: "undoClose", id: c.id })] : []), act("Show or hide Questlog panel", "panel", { type: "pane", id: c.id }), act("Hide this session", "x", { type: "dismiss", id: c.id })]
     : [];
   const meta = c.total > 0
     ? [segments(c), h("span", { class: "cnt" }, c.done + " of " + c.total), c.held ? h("span", { class: "chip amber" }, c.held + " held") : null, c.state === "here" ? h("span", { class: "chip blue" }, "this tab") : null, c.where ? h("span", { class: "chip", title: c.where }, c.where) : null]
@@ -181,6 +185,7 @@ function card(c) {
     h("span", { class: "age" }, c.age),
     h("span", { class: "acts" }, acts),
     h("span", { class: "meta" }, meta),
+    c.closedBy ? h("span", { class: "closedline" }, "Closed by " + c.closedBy.tag + " " + c.closedBy.plan + ": " + c.closedBy.evidence) : null,
     !expanded && c.now ? h("span", { class: "nowline", title: c.now }, "\\u2192 " + c.now) : null);
   return [head, expanded ? h("div", { class: "stepsx" }, stepKeys(c).map((key, i) => stepRow(c, c.steps[i], key))) : null];
 }
@@ -225,17 +230,23 @@ function render() {
   let shown = 0;
   for (const g of m.groups) {
     const cards = g.cards.filter(keep);
-    if (cards.length === 0 && f !== "all") continue;
+    const ended = f === "active" ? [] : (g.ended || []);
+    if (cards.length === 0 && ended.length === 0 && f !== "all") continue;
     const open = !st.closed.has("g:" + g.repo);
     root.append(h("div", { class: "grp", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(st.closed, "g:" + g.repo) } },
       h("span", { class: "chev" }, icon("chev")), h("span", { class: "grow" }, g.repo), cards.length ? h("span", { class: "pill" }, cards.length) : h("span", { class: "chip" }, "no live session")));
-    shown += cards.length;
+    shown += cards.length + ended.length;
     if (open) for (const c of cards) root.append(...card(c).filter(Boolean));
+    if (open && ended.length > 0) {
+      const key = "e:" + g.repo, out = st.open.has(key);
+      root.append(h("div", { class: "endedline", tabindex: 0, role: "button", "aria-expanded": String(out), on: { click: () => toggle(st.open, key) } }, h("span", { class: "chev" }, icon("chev")), ended.length + " closed with steps left"));
+      if (out) for (const c of ended) root.append(...card(c).filter(Boolean));
+    }
   }
   if (shown === 0) root.append(h("div", { class: "empty" }, m.groups.length === 0 ? "No live Claude Code sessions recorded. A session appears here once it calls the questlog tool (the questlog mod adds it)." : "Nothing here right now."));
 }
 window.addEventListener("message", (e) => { if (e.data && e.data.type === "model") { st.model = e.data.model; pruneState(st.model); draw(); } });
-document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step")) { e.preventDefault(); e.target.click(); } });
+document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline")) { e.preventDefault(); e.target.click(); } });
 post({ type: "ready" });
 `;
 

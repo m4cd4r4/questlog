@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -14,7 +14,7 @@ import {
 } from "./plans";
 import {
   bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
-  canResume, dismissedFrom, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, type Dismissed,
+  canResume, CLOSE_EXT, closeFrom, dismissedFrom, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type Dismissed,
   sessionIdFromArg, statusText, stepsOf, visibleRows, type Group, type Row, type Step,
 } from "./rows";
 
@@ -32,20 +32,27 @@ const rowsDir = () => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".cl
 function readRows(): Row[] {
   let names: string[];
   try {
-    names = readdirSync(rowsDir()).filter((n) => n.endsWith(".json"));
+    names = readdirSync(rowsDir());
   } catch {
     return [];
   }
   const rows: Row[] = [];
+  const closes = new Map<string, Close>();
   for (const n of names) {
     try {
-      const v: unknown = JSON.parse(readFileSync(join(rowsDir(), n), "utf8"));
-      if (isRow(v)) rows.push(v);
+      const text = n.endsWith(".json") || n.endsWith(CLOSE_EXT) ? readFileSync(join(rowsDir(), n), "utf8") : "";
+      if (n.endsWith(CLOSE_EXT)) {
+        const c = closeFrom(text);
+        if (c) closes.set(n.slice(0, -CLOSE_EXT.length), c);
+      } else if (text) {
+        const v: unknown = JSON.parse(text);
+        if (isRow(v)) rows.push(v);
+      }
     } catch {
       // half-written file; the next change event reads it whole
     }
   }
-  return rows;
+  return withCloses(rows, closes);
 }
 
 // One flag per session; the mod polls it and opens or closes its Questlog pane
@@ -176,7 +183,7 @@ li.now{font-weight:600;color:var(--vscode-textLink-foreground)}
 .d{display:block;font-weight:400;color:var(--vscode-descriptionForeground);margin-top:2px}
 </style></head><body>
 <h1>${esc(planOf(r))}</h1>
-<p class="meta">${r.total > 0 ? `${r.done}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
+<p class="meta">${r.total > 0 ? `${r.done}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}${r.closed ? `<br>Closed by ${esc(r.closed.by.slice(0, 6))} ${esc(r.closed.byPlan)}: ${esc(r.closed.evidence)}` : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
 <ul>${steps}</ul>
 </body></html>`;
 }
@@ -266,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
         // The page only names a session; the host rebuilds the command from the row, so the page cannot choose the text
         const row = tree.rows.find((x) => x.id === m.id);
         // Same test the page's button used, re-run here: a row that does not offer the button is ignored
-        const closed = !!row && tree.live !== undefined && !tree.live.has(row.id);
+        const closed = !!row && (row.ended || (tree.live !== undefined && !tree.live.has(row.id)));
         const text = row && canResume(row, Date.now(), tree.openTags, tree.folders, closed) ? resumeCommandOf(row) : undefined;
         if (!row || !text) break;
         const copy = () => vscode.env.clipboard.writeText(text).then(() => vscode.window.setStatusBarMessage("Copied resume command: paste it in a terminal", 4000));
@@ -289,6 +296,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
         break;
       }
+      case "undoClose":
+        // Only a row this window read a close for, so the page cannot name a path
+        if (tree.rows.some((x) => x.id === m.id && x.closed)) {
+          rmSync(join(rowsDir(), `${m.id}${CLOSE_EXT}`), { force: true });
+          update();
+        }
+        break;
       case "pane":
         void vscode.commands.executeCommand(PANE_COMMAND, m.id);
         break;
@@ -384,7 +398,7 @@ export function activate(context: vscode.ExtensionContext) {
     const focused = visibleRows(tree.rows, now, tree.dismissed).find((r) => r.id === tree.focusedId);
     const shown = focused ?? (planless ? undefined : rowForWorkspace(tree.rows, folders(), now));
     tree.fire();
-    const live = visibleRows(tree.rows, now, tree.dismissed).filter((r) => !isStale(r, now));
+    const live = visibleRows(tree.rows, now, tree.dismissed).filter((r) => !isStale(r, now) && !r.ended && !r.closed);
     if (tree.view) tree.view.badge = live.length > 0 ? { value: live.length, tooltip: `${live.length} live session${live.length === 1 ? "" : "s"}` } : undefined;
     if (shown) {
       status.text = `$(questlog-logo) ${statusText(shown)}`;

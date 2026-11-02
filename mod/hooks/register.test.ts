@@ -7,7 +7,7 @@ import type { On } from 'claude-code'
 
 const FLAG = 'C:/cfg/questlog/panes/sess-1.json'
 
-type World = { flag?: string, files?: Record<string, string>, open: string[], closed: string[], writes: { path: string, text: string }[], statuses: (string | undefined)[] }
+type World = { flag?: string, files?: Record<string, string>, open: string[], closed: string[], writes: { path: string, text: string }[], statuses: (string | undefined)[], misses: string[] }
 
 function world(on: On, w: World) {
   mock.env(on, { CLAUDE_CONFIG_DIR: 'C:/cfg' })
@@ -19,7 +19,12 @@ function world(on: On, w: World) {
     const path = e.path.split(String.fromCharCode(92)).join('/')
     if (path === FLAG && w.flag !== undefined) return { value: w.flag }
     if (w.files?.[path] !== undefined) return { value: w.files[path] }
+    w.misses.push(path)
     return { deny: `ENOENT ${e.path}` }
+  })
+  on('fs.exists', async (_$, e) => {
+    const path = e.path.split(String.fromCharCode(92)).join('/')
+    return { value: (path === FLAG && w.flag !== undefined) || w.files?.[path] !== undefined }
   })
   on('fs.write', async (_$, e) => {
     const path = e.path.split(String.fromCharCode(92)).join('/')
@@ -43,7 +48,7 @@ function world(on: On, w: World) {
   on('session.start', async (_$, e) => ({ cwd: e.cwd }) as never)
 }
 
-const fresh = (): World => ({ open: [], closed: [], writes: [], statuses: [] })
+const fresh = (): World => ({ open: [], closed: [], writes: [], statuses: [], misses: [] })
 const start = { cwd: 'C:/work/repo', surface: 'terminal', isInteractive: true } as const
 
 test('no flag: the pane stays closed, at start and on the poll', async ($, on) => {
@@ -54,6 +59,17 @@ test('no flag: the pane stays closed, at start and on the poll', async ($, on) =
   await clock.settle()
   await clock.advance(10_000)
   expect(w.open).toEqual([])
+})
+
+test('no flag: the poll never fails a read, so it logs no ENOENT line', async ($, on) => {
+  const w = fresh()
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  w.misses.length = 0
+  await clock.advance(10_000)
+  expect(w.misses).toEqual([])
 })
 
 test('the flag turned on opens the pane on the next poll; turned off closes it', async ($, on) => {
@@ -90,6 +106,30 @@ test('status_line on (default): a questlog update writes the status line', async
   await clock.settle()
   await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't1', plan: 'P', steps: [{ text: 'a', status: 'now' }] } as never)
   expect(w.statuses.length).toBeGreaterThan(0)
+})
+
+test('questlog_close: writes who and what proves it beside the row, leaves the row alone, and refuses a second close', async ($, on) => {
+  const A = 'aaaaaa00-0'
+  const row = JSON.stringify({ id: A, repo: 'repo', where: '', plan: 'Add checkout', done: 4, total: 5, now: '', updatedAt: 7, cwd: 'C:/work/repo' })
+  const w = { ...fresh(), files: { [`C:/cfg/questlog/${A}.json`]: row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't1', plan: 'Tidy worktrees', steps: [{ text: 'a', status: 'now' }] } as never)
+  const call = (session: string, evidence: string) => $.tool.call({ tool: 'mcp__questlog__questlog_close', tool_use_id: 't2', session, evidence } as never)
+
+  await call('aaaaaa', '  ')
+  expect(w.files[`C:/cfg/questlog/${A}.close`]).toBeUndefined()
+  await call('aaaaaa', 'git worktree list no longer shows it')
+  const close = JSON.parse(w.files[`C:/cfg/questlog/${A}.close`])
+  expect(close.by).toBe('sess-1')
+  expect(close.byPlan).toBe('Tidy worktrees')
+  expect(close.evidence).toBe('git worktree list no longer shows it')
+  expect(close.rowUpdatedAt).toBe(7)
+  expect(w.files[`C:/cfg/questlog/${A}.json`]).toBe(row)
+  await call('aaaaaa', 'a later claim')
+  expect(JSON.parse(w.files[`C:/cfg/questlog/${A}.close`]).evidence).toBe('git worktree list no longer shows it')
 })
 
 const OLD = 'C:/cfg/session-compass'

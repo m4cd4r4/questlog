@@ -38,6 +38,19 @@ function render(model: unknown, state: unknown = {}) {
 }
 
 const card = (id: string) => ({ id, kind: "session", state: "run", title: id, age: "1m", steps: [], total: 0, done: 0, held: 0, now: "", where: "", open: false });
+
+test("a closed card names who closed it and offers undo; closed tabs wait behind one line until it is opened", () => {
+  const summary = { sessions: 1, here: 0, running: 0, waiting: 0, held: 0, idle: 1 };
+  const closed = { ...card("a"), state: "closed", age: "closed 5m", closedBy: { tag: "bbbbbb", plan: "Tidy worktrees", evidence: "Worktree gone" } };
+  const groups = [{ repo: "shop", cards: [closed], ended: [{ ...card("hidden"), state: "held" }, { ...card("hidden2"), state: "held" }] }];
+  const shut = walk(render({ summary, groups, note: [] }));
+  assert.ok(shut.some((e) => e.className === "closedline" && e.textContent === "Closed by bbbbbb Tidy worktrees: Worktree gone"));
+  assert.ok(shut.some((e) => e.attrs["aria-label"] === "Undo close"));
+  assert.ok(shut.some((e) => e.className === "endedline" && e.textContent === "2 closed with steps left"));
+  assert.ok(!shut.some((e) => e.textContent === "hidden"));
+  const open = walk(render({ summary, groups, note: [] }, { open: ["e:shop"] }));
+  assert.ok(open.some((e) => e.textContent === "hidden"));
+});
 const summary = { sessions: 2, here: 0, running: 2, held: 0, idle: 0 };
 
 test("collapsed repo groups with sessions in them do not show the empty state", () => {
