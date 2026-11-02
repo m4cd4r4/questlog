@@ -178,6 +178,8 @@ export type Row = {
   total: number
   now: string
   updatedAt: number
+  // What a close is held against; rows written before it lack it
+  reportedAt?: number
   ended?: boolean
   // Read by the VS Code sidebar; rows written before 0.2.0 lack them
   steps?: Step[]
@@ -195,13 +197,13 @@ export const rowOf = (id: string, c: Questlog, ended = false, cwd = ''): Row => 
   const { done, total, now } = stage(c.steps)
   return {
     id, repo: c.repo, where: whereLabel(c), plan: c.plan || c.topic, done, total, now, updatedAt: c.updatedAt, ended,
-    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '', ...(c.inTurn ? { inTurn: true } : {}),
+    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '', ...(c.reportedAt ? { reportedAt: c.reportedAt } : {}), ...(c.inTurn ? { inTurn: true } : {}),
   }
 }
 
 // Another session's word that a card is finished. Its own file, so neither session overwrites the other's;
-// it holds only while the row is still the one closed (the extension's withCloses), so the owner updating undoes it
-export type Close = { by: string, byPlan: string, evidence: string, at: number, rowUpdatedAt: number }
+// it holds until the owner reports again (the extension's withCloses); reopening the owner's tab is not a report
+export type Close = { by: string, byPlan: string, evidence: string, at: number, rowReportedAt: number }
 export const CLOSE_EXT = '.close'
 
 const flatId = (id: string) => id.replace(/-/g, '').toLowerCase()
@@ -225,10 +227,10 @@ export const pickCard = (rows: readonly Row[], selfId: string, repo: string, ses
 }
 
 export const closeOf = (row: Row, byId: string, c: Questlog, evidence: string, nowMs: number): Close => ({
-  by: byId, byPlan: cut(c.plan || c.topic || c.repo, 80), evidence: evidence.trim().slice(0, 400), at: nowMs, rowUpdatedAt: row.updatedAt,
+  by: byId, byPlan: cut(c.plan || c.topic || c.repo, 80), evidence: evidence.trim().slice(0, 400), at: nowMs, rowReportedAt: row.reportedAt ?? row.updatedAt,
 })
 
-export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => closes.get(r.id)?.rowUpdatedAt === r.updatedAt
+export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => closes.get(r.id)?.rowReportedAt === (r.reportedAt ?? r.updatedAt)
 
 // What stops a turn that ran tools after its last report, so the card's count is current. Once per stop:
 // stop_hook_active is the model answering this, and a plan with nothing left has nothing to correct
@@ -248,6 +250,7 @@ export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
     ...c,
     branch: c.branch || saved.branch || '',
     shownTitle: saved.title || undefined,
+    reportedAt: saved.reportedAt ?? saved.updatedAt,
     ...(steps.length > 0 ? { plan: saved.plan, steps } : { topic: saved.plan }),
   }
 }

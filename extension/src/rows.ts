@@ -13,6 +13,8 @@ export type Row = {
   total: number;
   now: string;
   updatedAt: number;
+  /** When the session last spoke for itself. Reopening a tab moves updatedAt, not this; rows from before it lack it. */
+  reportedAt?: number;
   ended?: boolean;
   steps?: Step[];
   branch?: string;
@@ -28,7 +30,7 @@ export type Row = {
 };
 
 /** Written by the session that closed the card (mod lib.ts closeOf). The row's owner never writes it, so neither can overwrite the other. */
-export type Close = { by: string; byPlan: string; evidence: string; at: number; rowUpdatedAt: number };
+export type Close = { by: string; byPlan: string; evidence: string; at: number; rowReportedAt: number };
 
 /** `<session id>.close` beside the rows: not a .json file, so nothing reads one as a row. */
 export const CLOSE_EXT = ".close";
@@ -36,17 +38,17 @@ export const CLOSE_EXT = ".close";
 export const closeFrom = (text: string): Close | undefined => {
   try {
     const c = JSON.parse(text) as Close;
-    return typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowUpdatedAt === "number" ? c : undefined;
+    return typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowReportedAt === "number" ? c : undefined;
   } catch {
     return undefined;
   }
 };
 
-/** A close holds only for the row it was made against: a session that updates again comes back, like a hidden one. */
+/** A close holds until the session reports again, when it comes back like a hidden one. Reopening its tab is not a report. */
 export const withCloses = (rows: readonly Row[], closes: ReadonlyMap<string, Close>): Row[] =>
   rows.map((r) => {
     const c = closes.get(r.id);
-    return c && c.rowUpdatedAt === r.updatedAt ? { ...r, closed: c } : r;
+    return c && c.rowReportedAt === (r.reportedAt ?? r.updatedAt) ? { ...r, closed: c } : r;
   });
 
 export const STALE_MS = 6 * 60 * 60 * 1000;

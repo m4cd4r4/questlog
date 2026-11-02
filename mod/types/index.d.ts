@@ -8,6 +8,8 @@ export type Questlog = {
   topic: string
   steps: Step[]
   updatedAt: number
+  // When the session last spoke for itself; working out where it is on reopening moves updatedAt only
+  reportedAt?: number
   // The tab title last handed to the host; the sidebar matches the active tab's label to it
   shownTitle?: string
   // The plan or topic the session tag was added under; a new name drops the tag unless it clashes too

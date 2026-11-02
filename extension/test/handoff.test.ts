@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildModel } from "../src/model.ts";
-import { GONE_MS, type Row } from "../src/rows.ts";
+import { GONE_MS, withCloses, type Close, type Row } from "../src/rows.ts";
 
 const NOW = 10 * GONE_MS;
 const MIN = 60_000;
@@ -38,12 +38,21 @@ test("a stopped session that was partway through a turn says interrupted, one be
   assert.equal(cards.find((c) => c.id === A)!.state, "held");
 });
 
+test("a close survives the owner's tab reopening, and lapses when the owner reports again", () => {
+  const close: Close = { by: B, byPlan: "Tidy worktrees", evidence: EVIDENCE, at: NOW - MIN, rowReportedAt: NOW - 30 * MIN };
+  const closes = new Map([[A, close]]);
+  const closedAfter = (o: Partial<Row>) => withCloses([session(A, "Add checkout", 4, 5, o)], closes)[0].closed;
+  assert.ok(closedAfter({ reportedAt: NOW - 30 * MIN, updatedAt: NOW }), "reopening touches updatedAt only");
+  assert.equal(closedAfter({ reportedAt: NOW, updatedAt: NOW }), undefined);
+  assert.ok(closedAfter({ updatedAt: NOW - 30 * MIN }), "a row with no reportedAt goes by updatedAt");
+});
+
 for (const how of ["killed", "cleanly closed"] as const) {
   test(`handoff, A ${how}: A stops reading as open work and names B and the evidence; the others in the folder are untouched`, () => {
     const rows: Row[] = [
       session(A, "Add checkout", 4, 5, {
         ended: how === "cleanly closed",
-        closed: { by: B, byPlan: "Tidy worktrees", evidence: EVIDENCE, at: NOW - MIN, rowUpdatedAt: NOW - 30 * MIN },
+        closed: { by: B, byPlan: "Tidy worktrees", evidence: EVIDENCE, at: NOW - MIN, rowReportedAt: NOW - 30 * MIN },
       }),
       session(B, "Tidy worktrees", 2, 2, { updatedAt: NOW - MIN }),
       session(C, "Fix search", 1, 4),

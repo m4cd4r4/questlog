@@ -126,10 +126,22 @@ test('questlog_close: writes who and what proves it beside the row, leaves the r
   expect(close.by).toBe('sess-1')
   expect(close.byPlan).toBe('Tidy worktrees')
   expect(close.evidence).toBe('git worktree list no longer shows it')
-  expect(close.rowUpdatedAt).toBe(7)
+  expect(close.rowReportedAt).toBe(7)
   expect(w.files[`C:/cfg/questlog/${A}.json`]).toBe(row)
   await call('aaaaaa', 'a later claim')
   expect(JSON.parse(w.files[`C:/cfg/questlog/${A}.close`]).evidence).toBe('git worktree list no longer shows it')
+})
+
+test('reopening a session keeps its report stamp, so a close against it holds; a new report moves the stamp', async ($, on) => {
+  const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'Add checkout', done: 1, total: 2, now: 'b', steps: [{ text: 'a', status: 'done' }, { text: 'b', status: 'now' }], updatedAt: 7, ended: true })
+  const w = { ...fresh(), files: { 'C:/cfg/questlog/sess-1.json': row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).toBe(7)
+  await $.tool.call({ tool: 'mcp__questlog__questlog', tool_use_id: 't1', plan: 'Add checkout', steps: [{ text: 'a', status: 'done' }, { text: 'b', status: 'done' }] } as never)
+  expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).not.toBe(7)
 })
 
 const OLD = 'C:/cfg/session-compass'

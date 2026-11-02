@@ -36,9 +36,10 @@ let showStatus = true
 let tagMode: TagMode = 'clash'
 
 // Everything that writes state goes through here: title source, pane, status, shared file
-async function save($: EngineInterface, change: (c: Questlog) => Questlog) {
+async function save($: EngineInterface, change: (c: Questlog) => Questlog, report = true) {
   const before = await read($, questlog)
-  const after = { ...change(before), updatedAt: await $.clock.now() }
+  const stamp = await $.clock.now()
+  const after = { ...change(before), updatedAt: stamp, ...(report ? { reportedAt: stamp } : {}) }
   await update($, questlog, () => after)
   if (showStatus) $.ui.status(statusText(after))
   const { total } = stage(after.steps)
@@ -153,7 +154,7 @@ async function refreshWhere($: EngineInterface) {
   const where = top ? whereFromGit(top, common || `${top}/.git`) : whereFromGit(cwd, '')
   const now = await read($, questlog)
   if (now.repo === where.repo && now.slug === where.slug && now.branch === branch) return now
-  return save($, c => ({ ...c, ...where, branch }))
+  return save($, c => ({ ...c, ...where, branch }), false)
 }
 
 // The pane is off until the person turns it on from the extension's hover card, per session
