@@ -36,8 +36,9 @@ let showStatus = true
 // The session_tag option; register sets it on every load
 let tagMode: TagMode = 'clash'
 
-// Everything that writes state goes through here: title source, pane, status, shared file
-async function save($: EngineInterface, change: (c: Questlog) => Questlog, report = true) {
+// Everything that writes state goes through here: title source, pane, status, shared file.
+// Only the questlog tool is a report (moves reportedAt, so a close against the row lapses); every other save is bookkeeping
+async function save($: EngineInterface, change: (c: Questlog) => Questlog, report = false) {
   const before = await read($, questlog)
   const stamp = await $.clock.now()
   const after = { ...change(before), updatedAt: stamp, ...(report ? { reportedAt: stamp } : {}) }
@@ -93,7 +94,11 @@ async function readCloses($: EngineInterface) {
   for (const f of await $.fs.list(`${dir}/questlog`).catch(() => [])) {
     if (!f.name.endsWith(CLOSE_EXT)) continue
     const text = await $.fs.read(`${dir}/questlog/${f.name}`).catch(() => '')
-    try { closes.set(f.name.slice(0, -CLOSE_EXT.length), JSON.parse(String(text ?? ''))) } catch { /* half-written file */ }
+    try {
+      const c = JSON.parse(String(text ?? '')) as Partial<Close> | null
+      // Only a close with the two fields isClosed and tagOf read; a half-written or hand-edited file is no close
+      if (c && typeof c.by === 'string' && typeof c.rowReportedAt === 'number') closes.set(f.name.slice(0, -CLOSE_EXT.length), c as Close)
+    } catch { /* half-written file */ }
   }
   return closes
 }
@@ -155,7 +160,7 @@ async function refreshWhere($: EngineInterface) {
   const where = top ? whereFromGit(top, common || `${top}/.git`) : whereFromGit(cwd, '')
   const now = await read($, questlog)
   if (now.repo === where.repo && now.slug === where.slug && now.branch === branch) return now
-  return save($, c => ({ ...c, ...where, branch }), false)
+  return save($, c => ({ ...c, ...where, branch }))
 }
 
 // The pane is off until the person turns it on from the extension's hover card, per session
@@ -308,11 +313,12 @@ export const register: Register = (on, options) => {
     return r
   }).catch(($, e, next) => next(e))
 
+  // No catch here: a catch that calls next again would run a failed tool a second time
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
     if (!/questlog/.test(e.tool)) toolsSinceReport++
     return ran
-  }).catch(($, e, next) => next(e))
+  })
 
   // The cast: the generated tool types list MCP servers' tools, not this mod's own
   on('tool.call', { tool: 'mcp__questlog__questlog' as 'Bash' }, async ($, e: any) => {
@@ -322,7 +328,7 @@ export const register: Register = (on, options) => {
       ...x,
       plan: typeof input.plan === 'string' && input.plan.trim() ? input.plan.trim().slice(0, 80) : x.plan,
       steps: Array.isArray(input.steps) ? steps : x.steps,
-    }))
+    }), true)
     toolsSinceReport = 0
     const { done, total } = stage(c.steps)
     return { result: `Questlog updated: ${c.plan || '(no plan)'} ${done}/${total}` }

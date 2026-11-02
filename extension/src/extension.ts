@@ -14,7 +14,7 @@ import {
 } from "./plans";
 import {
   bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
-  canResume, checkClose, CLOSE_EXT, closeByHand, CLOSED_BY_CHECK, closeFrom, dismissedFrom, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
+  canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
   sessionIdFromArg, statusText, stepsOf, visibleRows, type Group, type Row, type Step,
 } from "./rows";
 
@@ -330,9 +330,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Only a row this window read a close for, so the page cannot name a path
         const row = tree.rows.find((x) => x.id === m.id && x.closed);
         if (!row) break;
-        // A check would close the card again on the next tick: its close stays on disk, marked undone, until the session reports
-        if (row.closed!.by === CLOSED_BY_CHECK) writeClose(row.id, { ...row.closed!, undone: true });
-        else rmSync(closePath(row.id), { force: true });
+        // Whoever made it, a check would close the card again on the next tick: the close stays on disk, marked undone, until the session reports
+        writeClose(row.id, { ...row.closed!, undone: true });
         update();
         break;
       }
@@ -358,10 +357,19 @@ export function activate(context: vscode.ExtensionContext) {
   /** The person accounts for every open step, one at a time: finished, or not needed with a reason. Escape anywhere closes nothing. */
   async function closeFromPanel(id: string) {
     const row = tree.rows.find((x) => x.id === id);
-    if (!row || !hasWorkLeft(row)) return;
+    if (!row) return;
+    if (row.closed) return void vscode.window.showInformationMessage(`Already closed by ${row.closed.by}. Undo that close first.`);
+    if (!hasWorkLeft(row)) return;
     const steps: CloseStep[] = [];
     const title = `Close "${planOf(row)}"`;
-    for (const s of stepsOf(row).filter((x) => x.status !== "done")) {
+    const open = stepsOf(row).filter((x) => x.status !== "done");
+    // A row that counts steps it never listed has nothing to go through one by one: one reason for the lot
+    if (open.length === 0) {
+      const reason = await vscode.window.showInputBox({ title, prompt: "What proves the work is done", ignoreFocusOut: true, validateInput: (v) => (v.trim() ? undefined : "Give a reason") });
+      if (reason === undefined) return;
+      steps.push({ text: planOf(row), outcome: "finished", why: reason.trim() });
+    }
+    for (const s of open) {
       const pick = await vscode.window.showQuickPick(["Finished", "Not needed"], { title, placeHolder: s.text, ignoreFocusOut: true });
       if (!pick) return;
       let why = "";
@@ -372,6 +380,9 @@ export function activate(context: vscode.ExtensionContext) {
       }
       steps.push({ text: s.text, outcome: pick === "Finished" ? "finished" : "not needed", why });
     }
+    // The session may have reported while the prompts were up: a close against the old report would be ignored without a word
+    const latest = tree.rows.find((x) => x.id === id);
+    if (!latest || (latest.reportedAt ?? latest.updatedAt) !== (row.reportedAt ?? row.updatedAt)) return void vscode.window.showInformationMessage("Nothing closed: the session reported again meanwhile. Check its card.");
     writeClose(row.id, closeByHand(row, steps, Date.now()));
     update();
   }

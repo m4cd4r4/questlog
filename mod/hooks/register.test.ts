@@ -179,6 +179,20 @@ test('reopening a session keeps its report stamp, so a close against it holds; a
   expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).not.toBe(7)
 })
 
+test('a plan name taken from a written plan file is bookkeeping, not a report: the stamp stays', async ($, on) => {
+  // A row with a plan and no steps restores as a topic, with its stamp; the written heading then names the plan
+  const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'First prompt', done: 0, total: 0, now: '', steps: [], updatedAt: 7, ended: true })
+  const w = { ...fresh(), files: { 'C:/cfg/questlog/sess-1.json': row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  on('tool.call', async () => ({ result: 'written' }) as never)
+  await $.session.start(start)
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', tool_use_id: 't1', file_path: 'C:/cfg/.claude/plans/x.md', content: '# Add checkout\n' } as never)
+  const saved = JSON.parse(w.files['C:/cfg/questlog/sess-1.json'])
+  expect([saved.plan, saved.reportedAt]).toEqual(['Add checkout', 7])
+})
+
 const OLD = 'C:/cfg/session-compass'
 const NEW = 'C:/cfg/questlog'
 const savedRow = JSON.stringify({ id: 'sess-1', repo: 'repo', branch: 'main', where: '', plan: 'Old plan', topic: '', done: 0, total: 1, now: 'a', steps: [{ text: 'a', status: 'now' }], updatedAt: 1, ended: false })

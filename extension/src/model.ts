@@ -85,7 +85,7 @@ const sessionCard = (r: Row, now: number, focusedId?: string, openTags: Readonly
     title: planOf(r),
     state,
     age: closed ? `closed ${ago(now - closed.at)}` : stale ? `${state === "held" ? (r.inTurn ? "interrupted" : "unfinished") : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
-    // Every step a close accounted for counts, so a closed card reads whole
+    // Every step a close accounted for counts, so a closed card reads whole (statusText agrees)
     done: cardSteps.length > 0 ? cardSteps.filter((s) => s.status === "done" || s.status === "not needed").length : r.done,
     total: r.total,
     held: 0,

@@ -43,3 +43,10 @@ test("an undone check close neither closes the card nor lets the check close it 
   assert.equal(closeFrom(JSON.stringify(prior))?.undone, true);
   assert.equal(closeFrom(JSON.stringify({ ...prior, steps: [{ text: "x", outcome: "maybe", why: "" }] })), undefined, "a close with a malformed step list is ignored");
 });
+
+test("checkClose leaves a row /clear carried on, and one older than PARKED_MS, alone", () => {
+  const removed = { text: "Remove the worktree", status: "todo" as const, check: { gone: "/work/shop-old" } };
+  assert.ok(checkClose(row([removed]), NOW, exists), "the check itself passes");
+  assert.equal(checkClose(row([removed], { continuedIn: "bbbbbbbb-0000-4000-8000-000000000002" }), NOW, exists), undefined);
+  assert.equal(checkClose(row([removed], { updatedAt: NOW - 8 * 24 * 60 * MIN }), NOW, exists), undefined);
+});

@@ -80,7 +80,8 @@ const closeSteps = (steps: readonly CloseStep[]) => steps.filter((s) => s.why).m
  */
 export const checkClose = (r: Row, nowMs: number, exists: (path: string) => boolean | undefined, prior?: Close): Close | undefined => {
   const rowReportedAt = r.reportedAt ?? r.updatedAt;
-  if (!hasWorkLeft(r) || prior?.rowReportedAt === rowReportedAt) return undefined;
+  // A row /clear carried on is accounted for by its continuation; a row past PARKED_MS is never shown, so never checked
+  if (!hasWorkLeft(r) || r.continuedIn || nowMs - r.updatedAt >= PARKED_MS || prior?.rowReportedAt === rowReportedAt) return undefined;
   const steps: CloseStep[] = [];
   for (const s of stepsOf(r).filter((x) => x.status !== "done")) {
     const c = s.check;
@@ -252,8 +253,8 @@ export const noteLines = (text: string) =>
 
 /** Status bar text for this window's session. */
 export const statusText = (r: Row) => {
-  // A close accounts for every open step, so a closed row reads whole here as on its card
-  const stage = r.total > 0 ? `${r.closed ? r.total : r.done}/${r.total} ` : "";
+  // A close that accounted for each open step reads whole here as on its card; one from before step accounting reads as reported
+  const stage = r.total > 0 ? `${r.closed?.steps?.length ? r.total : r.done}/${r.total} ` : "";
   const now = r.now ? ` · ${cut(r.now, 32)}` : "";
   return `${stage}${cut(planOf(r), 36)}${now}`;
 };
