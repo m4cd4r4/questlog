@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   COPY_ID_COMMAND, GONE_MS, PANE_COMMAND, PARKED_MS, ago, dismissedFrom, paneLink, paneOpenOf, STALE_MS, bar, copyIdLink, sessionIdFromArg, description, groupByRepo, isRow, isSessionTab, noteLines, rowForTab, rowForWorkspace, statusText, stepsOf, visibleRows,
-  canResume, handCloseBlocked, inOpenFolder, resumeCommandOf, sessionTagOf, type Row,
+  accountedSteps, canResume, doneOf, handCloseBlocked, inOpenFolder, isCheckablePath, nowOf, resumeCommandOf, sessionTagOf, type Row,
 } from "../src/rows.ts";
 
 const NOW = 10 * GONE_MS;
@@ -152,10 +152,32 @@ test("noteLines: one item per line, markers and blanks dropped", () => {
   assert.deepEqual(noteLines(""), []);
 });
 
-test("isRow rejects junk", () => {
+const UUID = "9d0182ef-186f-4137-b7ce-baa6e9209bcb";
+
+test("isRow rejects junk, and an id that is not a session UUID (it names the close file's path)", () => {
   assert.equal(isRow(null), false);
   assert.equal(isRow({ id: "a" }), false);
-  assert.equal(isRow(row({})), true);
+  assert.equal(isRow(row({ id: "../../x" })), false);
+  assert.equal(isRow(row({ id: UUID })), true);
+});
+
+test("isCheckablePath: local absolute or relative paths only; never UNC, URL or multi-line", () => {
+  for (const p of ["C:/work/a.ts", "/home/me/a", "docs/x.md", "a b.txt"]) assert.equal(isCheckablePath(p), true, p);
+  for (const p of ["\\\\host\\share\\f", "//host/share/f", "file:///C:/x", "https://x", "a\nb"]) assert.equal(isCheckablePath(p), false, p);
+});
+
+test("accountedSteps, doneOf and nowOf: a close's view of the steps feeds every surface", () => {
+  const steps = [{ text: "a", status: "done" as const }, { text: "b", status: "now" as const }, { text: "c", status: "todo" as const }];
+  const open = row({ done: 1, total: 3, now: "b", steps });
+  assert.deepEqual(accountedSteps(open).map((s) => s.status), ["done", "now", "todo"]);
+  assert.equal(doneOf(open), 1);
+  assert.equal(nowOf(open), "b");
+  const closed = row({ done: 1, total: 3, now: "b", steps, closed: { by: "x", byPlan: "", evidence: "", at: NOW, rowReportedAt: NOW, steps: [{ text: "B", outcome: "finished" as const, why: "ran" }, { text: "c", outcome: "not needed" as const, why: "dropped" }] } });
+  assert.deepEqual(accountedSteps(closed).map((s) => [s.status, s.detail]), [["done", undefined], ["done", "ran"], ["not needed", "dropped"]]);
+  assert.equal(doneOf(closed), 3);
+  assert.equal(nowOf(closed), "");
+  // A row with only a now line, recounted, would read 0: it keeps its own count
+  assert.equal(doneOf(row({ done: 2, total: 3, now: "write tests" })), 2);
 });
 
 test("copyIdLink carries the ID as the command's one argument", () => {

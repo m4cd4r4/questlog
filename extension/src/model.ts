@@ -1,5 +1,5 @@
 // Pure view model for the webview: no vscode import, so node --test runs it directly.
-import { ago, canResume, endedRows, groupByRepo, hasWorkLeft, isFinished, isStale, planOf, stepsOf, visibleRows, type Close, type Dismissed, type Row, type Step } from "./rows.ts";
+import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWorkLeft, isFinished, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
 import { openSlices, plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
 
 import type { LiveState } from "./live.ts";
@@ -55,16 +55,6 @@ export type ModelInput = {
   live?: ReadonlyMap<string, LiveState>;
 };
 
-const key = (text: string) => text.trim().toLowerCase();
-
-/** The steps as a close accounted for them: an open step it names reads finished or not needed; a close with no step list leaves them as reported. */
-const closedSteps = (steps: readonly Step[], closed?: Close): CardStep[] =>
-  steps.map((s) => {
-    const c = s.status !== "done" ? closed?.steps?.find((x) => key(x.text) === key(s.text)) : undefined;
-    if (!c) return { status: s.status, text: s.text, detail: s.detail };
-    return c.outcome === "finished" ? { status: "done", text: s.text, detail: c.why || s.detail } : { status: "not needed", text: s.text, detail: c.why };
-  });
-
 const sessionCard = (r: Row, now: number, focusedId?: string, openTags: ReadonlySet<string> = new Set(), folders: readonly string[] = [], live?: ReadonlyMap<string, LiveState>): Card => {
   const lv = live?.get(r.id);
   // The list was read and holds no process for this session: its window is closed, however recent its last update
@@ -79,16 +69,14 @@ const sessionCard = (r: Row, now: number, focusedId?: string, openTags: Readonly
   // A stale session with work left is unfinished (its window was probably closed); a stale finished one is just idle
   const state: CardState = closed && !waiting ? "closed" : stale ? (hasWorkLeft(r) ? "held" : "idle") : isFinished(r) ? "done" : here ? "here" : waiting ? "wait" : "run";
   const where = r.where || (r.branch && r.branch !== "main" && r.branch !== "master" ? r.branch : "");
-  const cardSteps = closedSteps(steps, closed);
+  const cardSteps: CardStep[] = accountedSteps(r);
   return {
     id: r.id,
     kind: "session",
     title: planOf(r),
     state,
     age: closed && !waiting ? `closed ${ago(now - closed.at)}` : stale ? `${state === "held" ? (r.inTurn ? "interrupted" : "unfinished") : "idle"} ${ago(now - r.updatedAt)}` : ago(now - r.updatedAt),
-    // Every step a close accounted for counts, so a closed card reads whole (statusText agrees); otherwise the count is
-    // the session's own, since a row from before step lists carries one "now" line and would read 0 if recounted
-    done: closed?.steps?.length ? cardSteps.filter((s) => s.status === "done" || s.status === "not needed").length : r.done,
+    done: doneOf(r),
     total: r.total,
     held: 0,
     where,
