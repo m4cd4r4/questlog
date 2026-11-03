@@ -162,8 +162,10 @@ test('restoreFrom: an empty questlog takes the saved plan, steps and branch back
   const saved: Row = { ...rowOf('s1', { ...EMPTY, repo: 'myapp', branch: 'feat/x', plan: 'Pricing fix', shownTitle: '1/2 Pricing fix', steps: [{ text: 'a', status: 'done' }, { text: 'b', status: 'now' }] }), ended: true }
   const back = restoreFrom(EMPTY, saved)
   expect(back.plan).toBe('Pricing fix')
-  // the title already shown is remembered, so a reopened session does not resend it over a hand-set name
-  expect(back.shownTitle).toBe('1/2 Pricing fix')
+  // the title last sent is forgotten: the host restored the tab with an older label, so the first
+  // prompt after a restart sends the plan title again
+  expect(back.shownTitle).toBeUndefined()
+  expect(sessionTitleOf(back, back.shownTitle)).toBe('1/2 Pricing fix · feat/x')
   expect(back.steps).toEqual(saved.steps)
   expect(back.branch).toBe('feat/x')
   // a questlog that already has a plan is left alone

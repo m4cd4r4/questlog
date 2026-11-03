@@ -289,13 +289,17 @@ const isEmpty = (c: Questlog) => !c.plan && !c.topic && c.steps.length === 0
 
 // A reopened session starts with an empty questlog; its saved row still knows the plan.
 // A row's plan may only be the first prompt, so it counts as a plan only when it has steps.
+// The title last sent is NOT taken back: the host restores the tab with whatever label it had
+// (the first prompt, or the tag of a session /clear replaced), so the first prompt after a
+// restart sends the plan title again. A tab name set by hand is overwritten on restart; ruled
+// the lesser cost (Macdara, 2026-11-03, #16).
 export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
   if (!isEmpty(c) || !saved.plan) return c
   const steps = saved.steps ?? []
   return {
     ...c,
     branch: c.branch || saved.branch || '',
-    shownTitle: saved.title || undefined,
+    shownTitle: undefined,
     reportedAt: saved.reportedAt ?? saved.updatedAt,
     ...(steps.length > 0 ? { plan: saved.plan, steps } : { topic: saved.plan }),
   }
