@@ -148,8 +148,8 @@ function stepKeys(c) {
 }
 function pruneState(m) {
   const live = new Set();
-  for (const g of m.groups) for (const c of [...g.cards, ...(g.ended || [])]) { live.add("c:" + c.id); for (const k of stepKeys(c)) live.add(k); }
-  const stale = (k) => (k.startsWith("c:") || k.startsWith("s:")) && !live.has(k);
+  for (const g of m.groups) { live.add("e:" + g.repo); for (const c of [...g.cards, ...(g.ended || [])]) { live.add("c:" + c.id); for (const k of stepKeys(c)) live.add(k); } }
+  const stale = (k) => (k.startsWith("c:") || k.startsWith("s:") || k.startsWith("e:")) && !live.has(k);
   for (const set of [st.seen, st.open]) for (const k of [...set]) if (stale(k)) set.delete(k);
 }
 function stepRow(c, s, key) {

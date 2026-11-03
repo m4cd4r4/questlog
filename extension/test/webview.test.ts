@@ -11,7 +11,8 @@ class El {
   append(...k: any[]) { this.children.push(...k); }
   replaceChildren(...k: any[]) { this.children = k; }
   setAttribute(n: string, v: string) { this.attrs[n] = String(v); }
-  addEventListener() {}
+  listeners: Record<string, (e?: unknown) => void> = {};
+  addEventListener(n: string, f: (e?: unknown) => void) { this.listeners[n] = f; }
   contains() { return false; }
   querySelectorAll() { return []; }
   get textContent(): string { return this.children.map((c) => (typeof c === "string" ? c : c.textContent)).join(""); }
@@ -23,7 +24,7 @@ function draw(model: unknown, state: unknown = {}) {
   return walk(render(model, state)).filter((e) => e.className === "empty").map((e) => e.textContent);
 }
 
-function render(model: unknown, state: unknown = {}) {
+function render(model: unknown, state: unknown = {}, sets: unknown[] = []) {
   const root = new El("div");
   const script = pageHtml("n", "csp").match(/<script nonce="n">([\s\S]*)<\/script>/)![1];
   const listeners: Record<string, (e: unknown) => void> = {};
@@ -32,7 +33,7 @@ function render(model: unknown, state: unknown = {}) {
     createTextNode: (s: string) => s, getElementById: () => root, activeElement: null, addEventListener() {},
   };
   const window = { addEventListener: (n: string, f: (e: unknown) => void) => { listeners[n] = f; } };
-  vm.runInNewContext(script, { document, window, acquireVsCodeApi: () => ({ getState: () => state, setState() {}, postMessage() {} }) });
+  vm.runInNewContext(script, { document, window, acquireVsCodeApi: () => ({ getState: () => state, setState: (v: unknown) => { sets.push(v); }, postMessage() {} }) });
   listeners.message({ data: { type: "model", model } });
   return root;
 }
@@ -91,4 +92,17 @@ test("the header count says session for one and sessions otherwise", () => {
 
 test("the empty state still shows when there are no groups", () => {
   assert.equal(draw({ summary: { ...summary, sessions: 0 }, note: [], groups: [] }).length, 1);
+});
+
+test("persisted open keys for cards, steps and ended lines of repos no longer shown are dropped", () => {
+  const summary = { sessions: 1, here: 0, running: 1, waiting: 0, held: 0, idle: 0 };
+  const groups = [{ repo: "shop", cards: [{ ...card("a"), total: 1, steps: [{ status: "now", text: "one" }] }], ended: [] }];
+  const sets: { open?: string[]; seen?: string[] }[] = [];
+  const state = { open: ["e:shop", "e:gone-repo", "c:a", "c:gone-card", "s:gone-card:0"], seen: ["e:shop", "e:gone-repo", "c:a", "c:gone-card"] };
+  const root = render({ summary, groups, note: [] }, state, sets);
+  // The filter button persists the state as pruned on the model
+  walk(root).find((e) => e.attrs["aria-pressed"] === "false")!.listeners.click();
+  const last = sets.at(-1)!;
+  assert.deepEqual([...last.open!].sort(), ["c:a", "e:shop"]);
+  assert.deepEqual([...last.seen!].sort(), ["c:a", "e:shop"]);
 });

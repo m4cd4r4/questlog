@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -15,7 +15,7 @@ import {
 import {
   bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
   canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, handCloseBlocked, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
-  sessionIdFromArg, statusText, stepsOf, visibleRows, type Group, type Row, type Step,
+  sessionIdFromArg, statusText, stepsOf, visibleRows, accountedSteps, doneOf, isCheckablePath, nowOf, type AccountedStep, type Group, type Row,
 } from "./rows";
 
 const VIEW = "questlog.sessions";
@@ -68,7 +68,7 @@ function writeClose(id: string, close: Close) {
 
 /** A step's path, read for existence only, never run or opened: absolute as given, else inside the session's folder. */
 const pathExists = (r: Row) => (p: string) => {
-  if (/[\r\n]/.test(p)) return undefined;
+  if (!isCheckablePath(p)) return undefined;
   if (isAbsolute(p)) return existsSync(p);
   return r.cwd ? existsSync(join(r.cwd, p)) : undefined;
 };
@@ -182,10 +182,11 @@ function readPlans(): ParentPlan[] {
   return plansFromRegistry(readRegistry(), { exists: existsSync, resumeCommand });
 }
 
-const STEP_MARK: Record<Step["status"], string> = {
+const STEP_MARK: Record<AccountedStep["status"], string> = {
   done: "$(pass-filled)",
   now: "$(arrow-right)",
   todo: "$(circle-large-outline)",
+  "not needed": "$(close)",
 };
 const MAX_TOOLTIP_STEPS = 25;
 const SHOW_DETAILS_COMMAND = "questlog.showDetails";
@@ -194,9 +195,10 @@ const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 /** Read-only page for one session, drawn in VS Code's own colours. */
 function detailsHtml(r: Row, now: number) {
-  const mark = { done: "&#10003;", now: "&#8594;", todo: "&#9675;" } as const;
-  const steps = stepsOf(r)
-    .map((s) => `<li class="${s.status}"><span class="m">${mark[s.status]}</span><span>${esc(s.text)}${s.detail ? `<span class="d">${esc(s.detail)}</span>` : ""}</span></li>`)
+  const mark: Record<AccountedStep["status"], string> = { done: "&#10003;", now: "&#8594;", todo: "&#9675;", "not needed": "&#10005;" };
+  // The same accounted view the card draws, so a closed step reads closed here too
+  const steps = accountedSteps(r)
+    .map((s) => `<li class="${s.status.replace(" ", "-")}"><span class="m">${mark[s.status]}</span><span>${esc(s.text)}${s.detail ? `<span class="d">${esc(s.detail)}</span>` : ""}</span></li>`)
     .join("");
   const where = [r.repo, r.where || r.branch].filter(Boolean).join(" · ");
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
@@ -208,12 +210,12 @@ code{font-family:var(--vscode-editor-font-family)}
 ul{list-style:none;padding:0;margin:12px 0 0}
 li{padding:4px 0;display:flex;gap:10px}
 .m{width:1.2em;text-align:center;flex:none}
-li.done{color:var(--vscode-descriptionForeground)}
+li.done,li.not-needed{color:var(--vscode-descriptionForeground)}
 li.now{font-weight:600;color:var(--vscode-textLink-foreground)}
 .d{display:block;font-weight:400;color:var(--vscode-descriptionForeground);margin-top:2px}
 </style></head><body>
 <h1>${esc(planOf(r))}</h1>
-<p class="meta">${r.total > 0 ? `${r.done}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}${r.closed ? `<br>Closed by ${esc(r.closed.by.slice(0, 6))}${r.closed.byPlan ? ` ${esc(r.closed.byPlan)}` : ""}${r.closed.evidence ? `: ${esc(r.closed.evidence)}` : ""}` : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
+<p class="meta">${r.total > 0 ? `${doneOf(r)}/${r.total} done` : "no steps yet"}${isStale(r, now) ? " · idle" : ""}${r.closed ? `<br>Closed by ${esc(r.closed.by.slice(0, 6))}${r.closed.byPlan ? ` ${esc(r.closed.byPlan)}` : ""}${r.closed.evidence ? `: ${esc(r.closed.evidence)}` : ""}` : ""}<br>${esc(where)}<br><code>${esc(r.cwd || "")}</code><br>Session <code>${esc(r.id)}</code> · updated ${esc(new Date(r.updatedAt).toLocaleTimeString())}</p>
 <ul>${steps}</ul>
 </body></html>`;
 }
@@ -221,10 +223,13 @@ li.now{font-weight:600;color:var(--vscode-textLink-foreground)}
 function tooltip(r: Row, now: number, scope: string) {
   const md = new vscode.MarkdownString(undefined, true);
   md.appendMarkdown(`**${planOf(r)}**${scope ? ` · ${scope}` : ""}\n\n`);
-  if (r.total > 0) md.appendMarkdown(`\`${bar(r.done, r.total)}\` ${r.done}/${r.total}\n\n`);
-  const steps = stepsOf(r);
+  const done = doneOf(r);
+  if (r.total > 0) md.appendMarkdown(`\`${bar(done, r.total)}\` ${done}/${r.total}\n\n`);
+  // The same accounted view the card draws: a closed step reads closed here too
+  const steps = accountedSteps(r);
   // The arrow row marks the current step; "Now" is only spoken when the list cut hides it
-  if (r.now && !steps.slice(0, MAX_TOOLTIP_STEPS).some((s) => s.status === "now")) md.appendMarkdown(`Now: ${r.now}\n\n`);
+  const current = nowOf(r);
+  if (current && !steps.slice(0, MAX_TOOLTIP_STEPS).some((s) => s.status === "now")) md.appendMarkdown(`Now: ${current}\n\n`);
   steps.slice(0, MAX_TOOLTIP_STEPS).forEach((s, i) => {
     md.appendMarkdown(`${STEP_MARK[s.status]} `);
     md.appendText(s.text);

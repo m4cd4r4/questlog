@@ -31,23 +31,12 @@ export type Row = {
   continuedIn?: string;
 };
 
-/** What a close says of one step that was open: finished, or not needed and why. */
-export type CloseStep = { text: string; outcome: "finished" | "not needed"; why: string };
-
-/**
- * Written by the session that closed the card (mod lib.ts closeOf), by this panel (closeByHand) or by a step check
- * (checkClose). The row's owner never writes it, so neither can overwrite the other. `steps` accounts for every step
- * that was open; closes from before it have the evidence line alone. `undone` keeps an undone check close from
- * closing the card again until its session reports.
- */
-export type Close = { by: string; byPlan: string; evidence: string; at: number; rowReportedAt: number; steps?: CloseStep[]; undone?: boolean };
+import { CLOSE_EXT, closeHolds, evidenceOf, stepKey, type Close, type CloseStep } from "../../mod/hooks/close.ts";
+export { CLOSE_EXT, type Close, type CloseStep };
 
 /** `by` for a close made from this panel, and for one a step check made: no session has an ID like either. */
 export const CLOSED_BY_HAND = "you";
 export const CLOSED_BY_CHECK = "check";
-
-/** `<session id>.close` beside the rows: not a .json file, so nothing reads one as a row. */
-export const CLOSE_EXT = ".close";
 
 const isCloseStep = (v: unknown): v is CloseStep => {
   const s = v as CloseStep;
@@ -69,10 +58,9 @@ export const closeFrom = (text: string): Close | undefined => {
 export const withCloses = (rows: readonly Row[], closes: ReadonlyMap<string, Close>): Row[] =>
   rows.map((r) => {
     const c = closes.get(r.id);
-    return c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt) ? { ...r, closed: c } : r;
+    return closeHolds(c, r) ? { ...r, closed: c } : r;
   });
 
-const closeSteps = (steps: readonly CloseStep[]) => steps.filter((s) => s.why).map((s) => (s.outcome === "finished" ? s.why : `${s.text}: ${s.why}`)).join("; ");
 
 /**
  * Closes a card whose every open step names a path that checks out: the close says each path and its state.
@@ -91,12 +79,12 @@ export const checkClose = (r: Row, nowMs: number, exists: (path: string) => bool
     if (exists(path) !== want) return undefined;
     steps.push({ text: s.text, outcome: "finished", why: `${path} ${want ? "exists" : "gone"}` });
   }
-  return steps.length > 0 ? { by: CLOSED_BY_CHECK, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt, steps } : undefined;
+  return steps.length > 0 ? { by: CLOSED_BY_CHECK, byPlan: "", evidence: evidenceOf(steps), at: nowMs, rowReportedAt, steps } : undefined;
 };
 
 /** The close this panel writes: the person accounted for every open step, with a reason for each one not needed. */
 export const closeByHand = (r: Row, steps: readonly CloseStep[], nowMs: number): Close => ({
-  by: CLOSED_BY_HAND, byPlan: "", evidence: closeSteps(steps), at: nowMs, rowReportedAt: r.reportedAt ?? r.updatedAt, steps: [...steps],
+  by: CLOSED_BY_HAND, byPlan: "", evidence: evidenceOf(steps), at: nowMs, rowReportedAt: r.reportedAt ?? r.updatedAt, steps: [...steps],
 });
 
 /**
@@ -117,10 +105,19 @@ export const GONE_MS = 24 * 60 * 60 * 1000;
 /** An unfinished session stays, shown as paused, for this long after its last update. */
 export const PARKED_MS = 7 * 24 * 60 * 60 * 1000;
 
+export const SESSION_ID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+/** A row is one the mod wrote for a session: its id is that session's UUID, which also keeps `<id>.close` inside the folder. */
 export const isRow = (v: unknown): v is Row => {
   const r = v as Row;
-  return !!r && typeof r.id === "string" && typeof r.updatedAt === "number";
+  return !!r && typeof r.id === "string" && SESSION_ID.test(r.id) && typeof r.updatedAt === "number";
 };
+
+/**
+ * A step check path the panel may look at: no line breaks, and never a UNC or URL path, which would make every
+ * window reach for a network share on each tick. Relative paths resolve inside the session's folder.
+ */
+export const isCheckablePath = (p: string) => !/[\r\n]/.test(p) && !/^[\\/]{2}/.test(p) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(p);
 
 export const isStale = (r: Row, nowMs: number) => nowMs - r.updatedAt >= STALE_MS;
 
@@ -200,7 +197,7 @@ export const planOf = (r: Row) => r.plan || "(no plan yet)";
 /** The tree row's grey text: stage, branch or worktree, age. */
 export const description = (r: Row, nowMs: number) => {
   const parts: string[] = [];
-  if (r.total > 0) parts.push(`${r.done}/${r.total}`);
+  if (r.total > 0) parts.push(`${doneOf(r)}/${r.total}`);
   const where = r.where || (r.branch && r.branch !== "main" && r.branch !== "master" ? r.branch : "");
   if (where) parts.push(where);
   parts.push(isStale(r, nowMs) ? `idle ${ago(nowMs - r.updatedAt)}` : ago(nowMs - r.updatedAt));
@@ -210,6 +207,31 @@ export const description = (r: Row, nowMs: number) => {
 /** Steps, falling back to the one "now" line older rows carry. */
 export const stepsOf = (r: Row): Step[] =>
   r.steps && r.steps.length > 0 ? r.steps : r.now ? [{ text: r.now, status: "now" }] : [];
+
+/** `not needed`: a close said this open step was not required, and `detail` carries its reason. */
+export type AccountedStep = { status: StepStatus | "not needed"; text: string; detail?: string; check?: StepCheck };
+
+/**
+ * The steps as the row's close accounted for them, the one view every surface draws (card, status bar, tooltip,
+ * details page): an open step the close names reads finished or not needed; a close with no step list leaves them
+ * as reported.
+ */
+export const accountedSteps = (r: Row): AccountedStep[] =>
+  stepsOf(r).map((s) => {
+    const c = s.status !== "done" ? r.closed?.steps?.find((x) => stepKey(x.text) === stepKey(s.text)) : undefined;
+    if (!c) return { status: s.status, text: s.text, detail: s.detail, check: s.check };
+    return c.outcome === "finished" ? { status: "done", text: s.text, detail: c.why || s.detail } : { status: "not needed", text: s.text, detail: c.why };
+  });
+
+/**
+ * The done count every surface shows: a close that accounted for each open step (the only kind a writer makes)
+ * counts whole; otherwise the session's own count (a row from before step lists carries one "now" line and
+ * would read 0 if recounted).
+ */
+export const doneOf = (r: Row) => (r.closed?.steps?.length ? r.total : r.done);
+
+/** The step in progress as a surface names it; none once the card is closed. */
+export const nowOf = (r: Row) => (r.closed ? "" : stepsOf(r).find((s) => s.status === "now")?.text ?? r.now);
 
 const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
@@ -265,13 +287,11 @@ export const noteLines = (text: string) =>
 
 /** Status bar text for this window's session. */
 export const statusText = (r: Row) => {
-  // A close that accounted for each open step reads whole here as on its card; one from before step accounting reads as reported
-  const stage = r.total > 0 ? `${r.closed?.steps?.length ? r.total : r.done}/${r.total} ` : "";
-  const now = r.now ? ` · ${cut(r.now, 32)}` : "";
+  const stage = r.total > 0 ? `${doneOf(r)}/${r.total} ` : "";
+  const now = nowOf(r) ? ` · ${cut(nowOf(r), 32)}` : "";
   return `${stage}${cut(planOf(r), 36)}${now}`;
 };
 
-const SESSION_ID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 /** A folder that stays inside double quotes in both bash and PowerShell. */
 const QUOTE_SAFE = /^[^"`$\r\n]+$/;
 

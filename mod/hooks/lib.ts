@@ -1,4 +1,6 @@
 import type { Questlog, Step, StepCheck, StepStatus } from '../types'
+import { CLOSE_EXT, EVIDENCE_MAX, closeHolds, evidenceOf, stepKey, type Close, type CloseStep } from './close'
+export { CLOSE_EXT, type Close, type CloseStep }
 
 export const EMPTY: Questlog = { repo: '', branch: '', slug: '', plan: '', topic: '', steps: [], updatedAt: 0 }
 
@@ -214,15 +216,7 @@ export const rowOf = (id: string, c: Questlog, ended = false, cwd = ''): Row => 
   }
 }
 
-// Another session's word that a card is finished. Its own file, so neither session overwrites the other's;
-// it holds until the owner reports again (the extension's withCloses); reopening the owner's tab is not a report.
-// `steps` accounts for every step that was open; `undone` is the extension's mark on a check close the person took back
-export type CloseStep = { text: string, outcome: 'finished' | 'not needed', why: string }
-export type Close = { by: string, byPlan: string, evidence: string, at: number, rowReportedAt: number, steps?: CloseStep[], undone?: boolean }
-export const CLOSE_EXT = '.close'
-
-const key = (text: string) => text.trim().toLowerCase()
-
+// The Close shape, its evidence join and the rule for when it holds live in shared/close.ts
 // A close says of every open step that it is finished or not needed, and why, so no card closes on one line about part of the work.
 // Steps are matched by their text as the card shows it; a row from before step lists has nothing to account for
 export const accountSteps = (row: Row, input: unknown): { steps: CloseStep[] } | { error: string } => {
@@ -232,9 +226,9 @@ export const accountSteps = (row: Row, input: unknown): { steps: CloseStep[] } |
   const steps: CloseStep[] = []
   const missing: string[] = []
   for (const s of open) {
-    const g: any = given.find((x: any) => x && typeof x.text === 'string' && key(x.text) === key(s.text))
+    const g: any = given.find((x: any) => x && typeof x.text === 'string' && stepKey(x.text) === stepKey(s.text))
     const outcome = g?.outcome === 'finished' || g?.outcome === 'not needed' ? g.outcome : undefined
-    const why = typeof g?.why === 'string' ? g.why.trim().slice(0, 400) : ''
+    const why = typeof g?.why === 'string' ? g.why.trim().slice(0, EVIDENCE_MAX) : ''
     if (!outcome || !why) missing.push(s.text)
     else steps.push({ text: s.text, outcome, why })
   }
@@ -266,14 +260,11 @@ export const pickCard = (rows: readonly Row[], selfId: string, repo: string, ses
 // The evidence line is the steps' reasons; a row with no step list keeps the one line the closer gave
 export const closeOf = (row: Row, byId: string, c: Questlog, steps: readonly CloseStep[], evidence: string, nowMs: number): Close => ({
   by: byId, byPlan: cut(c.plan || c.topic || c.repo, 80),
-  evidence: steps.length > 0 ? steps.map(s => (s.outcome === 'finished' ? s.why : `${s.text}: ${s.why}`)).join('; ').slice(0, 400) : evidence.trim().slice(0, 400),
+  evidence: steps.length > 0 ? evidenceOf(steps) : evidence.trim().slice(0, EVIDENCE_MAX),
   at: nowMs, rowReportedAt: row.reportedAt ?? row.updatedAt, ...(steps.length > 0 ? { steps: [...steps] } : {}),
 })
 
-export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => {
-  const c = closes.get(r.id)
-  return !!c && !c.undone && c.rowReportedAt === (r.reportedAt ?? r.updatedAt)
-}
+export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => closeHolds(closes.get(r.id), r)
 
 // Whether a report restates the plan and steps as they already stand: the texts, statuses, details and checks, in order
 export const sameReport = (a: Pick<Questlog, 'plan' | 'steps'>, b: Pick<Questlog, 'plan' | 'steps'>) =>
