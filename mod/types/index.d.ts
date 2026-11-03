@@ -18,6 +18,8 @@ export type Questlog = {
   taggedName?: string
   // A prompt is being worked on; still set in the row of a session that died mid-turn
   inTurn?: boolean
+  // The session ID this one took over from at /clear; its tab may still carry that session's tag
+  continuedFrom?: string
 }
 
 declare module 'claude-code' {

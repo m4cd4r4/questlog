@@ -278,3 +278,29 @@ test("handCloseBlocked: a report or another close made while the prompts were up
   assert.equal(handCloseBlocked(r, r, { ...close, undone: true }), undefined);
   assert.equal(handCloseBlocked(r, r, { ...close, rowReportedAt: 4 }), undefined);
 });
+
+test("rowForTab: a tag on the label names the session, whatever title the tab was left with", () => {
+  const rows = [
+    row({ id: "1389fe64-e3f6-40ae-b58c-5d6e7f8a9b0c", title: "5/5 Questlog sidebar visual check", updatedAt: NOW - 1000 }),
+    row({ id: "7b19a4aa-0000-4000-8000-000000000000", title: "[7b19a4] 2/5 Ship it", updatedAt: NOW - 2000 }),
+  ];
+  // the tab's label is stale after a restart: the tag still finds the row
+  assert.equal(rowForTab(rows, "[1389fe] Continue from the cornerman han…", NOW)?.id, rows[0].id);
+  assert.equal(rowForTab(rows, "[7b19a4] 2/5 Ship it", NOW)?.id, rows[1].id);
+  // an unknown tag falls back to the title, and matches nothing here
+  assert.equal(rowForTab(rows, "[abcdef] 2/5 Ship it", NOW), undefined);
+});
+
+test("rowForTab: a tab still tagged with the session a /clear replaced lands on the session that took over", () => {
+  const rows = [
+    row({ id: "1389fe64-e3f6-40ae-b58c-5d6e7f8a9b0c", title: "5/5 Questlog sidebar visual check", continuedFrom: "a3fea4bb-0000-4000-8000-000000000000", updatedAt: NOW - 1000 }),
+  ];
+  // the old session never wrote a row: the new row's continuedFrom is enough
+  assert.equal(rowForTab(rows, "[a3fea4] Continue from the cornerman han…", NOW)?.id, rows[0].id);
+  // when the old row is there, continuedIn leads forward too
+  const chain = [
+    row({ id: "a3fea4bb-0000-4000-8000-000000000000", title: "[a3fea4] Old", continuedIn: "1389fe64-e3f6-40ae-b58c-5d6e7f8a9b0c", updatedAt: NOW - 5000 }),
+    ...rows,
+  ];
+  assert.equal(rowForTab(chain, "[a3fea4] Old", NOW)?.id, rows[0].id);
+});

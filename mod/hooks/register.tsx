@@ -123,6 +123,8 @@ async function linkCleared($: EngineInterface) {
   clearedFrom = undefined
   const dir = await rowsDir($)
   if (!old || !dir) return
+  // The tab keeps the old session's tag until the next rename lands; the row says which session it now is
+  await save($, x => ({ ...x, continuedFrom: old }))
   const path = `${dir}/questlog/${old}.json`
   try {
     const row = JSON.parse(String((await $.fs.read(path)) ?? '')) as Row
