@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sameReport, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
+import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, movesWork, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sameReport, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -30,6 +30,11 @@ test('sameReport: the same plan and steps restated is no new report; a status, t
   expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0], { ...steps[1], detail: 'e' }] })).toBe(false)
   expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0], { ...steps[1], check: { exists: 'x' } }] })).toBe(false)
   expect(sameReport({ plan: 'P', steps }, { plan: 'P', steps: [steps[0]] })).toBe(false)
+})
+
+test('movesWork: reads and the questlog tools owe no report; edits, shell, agents and other MCP tools do', () => {
+  for (const t of ['Read', 'Grep', 'Glob', 'WebSearch', 'ToolSearch', 'mcp__questlog__questlog', 'mcp__questlog__questlog_close']) expect(movesWork(t)).toBe(false)
+  for (const t of ['Write', 'Edit', 'MultiEdit', 'Bash', 'PowerShell', 'Agent', 'NotebookEdit', 'mcp__vercel__deploy']) expect(movesWork(t)).toBe(true)
 })
 
 test('turnEndNudge: only a turn that ran tools since its report, with steps left, and never twice in a row', () => {

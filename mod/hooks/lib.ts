@@ -280,11 +280,16 @@ export const sameReport = (a: Pick<Questlog, 'plan' | 'steps'>, b: Pick<Questlog
   a.plan === b.plan && a.steps.length === b.steps.length &&
   a.steps.every((s, i) => JSON.stringify([s.text, s.status, s.detail ?? '', s.check ?? null]) === JSON.stringify([b.steps[i].text, b.steps[i].status, b.steps[i].detail ?? '', b.steps[i].check ?? null]))
 
+// Tools that only look: a turn made of these cannot have moved a step, so it owes no report.
+// Everything else (Write, Edit, Bash, agents, MCP tools that act) counts; questlog's own tools are the report
+const LOOK_ONLY = new Set(['Read', 'Grep', 'Glob', 'LS', 'WebFetch', 'WebSearch', 'ToolSearch', 'TodoRead', 'ListAgents', 'ReadNotifications', 'NotebookRead', 'AskUserQuestion'])
+export const movesWork = (tool: string) => !LOOK_ONLY.has(tool) && !/questlog/.test(tool)
+
 // What stops a turn that ran tools after its last report, so the card's count is current. Once per stop:
 // stop_hook_active is the model answering this, and a plan with nothing left has nothing to correct
 export const turnEndNudge = (steps: readonly Step[], toolsSinceReport: number, stopHookActive: boolean) =>
   !stopHookActive && toolsSinceReport > 0 && steps.some(s => s.status !== 'done')
-    ? 'Questlog: tools ran since your last report. Call questlog once with the plan and the whole step list as they stand now, marking everything that is finished as done, then stop. No narration.'
+    ? 'Questlog: tools that change things ran since your last report. Call questlog once with the plan and the whole step list as they stand now, marking everything that is finished as done, then stop. No narration.'
     : ''
 
 const isEmpty = (c: Questlog) => !c.plan && !c.topic && c.steps.length === 0

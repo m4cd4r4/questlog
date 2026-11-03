@@ -196,6 +196,23 @@ test('restating the same list after reopening is no report: a close another sess
   expect(JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).reportedAt).not.toBe(7)
 })
 
+test('a turn of reads alone is not stopped for a report; one that edited is, once', async ($, on) => {
+  const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'Add checkout', done: 1, total: 2, now: 'b', steps: [{ text: 'a', status: 'done' }, { text: 'b', status: 'now' }], updatedAt: 7, reportedAt: 7, ended: true })
+  const w = { ...fresh(), files: { 'C:/cfg/questlog/sess-1.json': row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  on('tool.call', async () => ({ result: 'ok' }) as never)
+  on('classic.Stop', () => ({}) as never)
+  await $.session.start(start)
+  await clock.settle()
+  const stop = async (active: boolean) => ((await $.classic.Stop({ stop_hook_active: active } as never)) as { block?: string }).block ?? ''
+  await $.tool.call({ tool: 'Grep', tool_use_id: 't1', pattern: 'x' } as never)
+  expect(await stop(false)).toBe('')
+  await $.tool.call({ tool: 'Edit', tool_use_id: 't2', file_path: 'C:/work/repo/a.ts', old_string: 'a', new_string: 'b' } as never)
+  expect(await stop(false)).toContain('questlog')
+  expect(await stop(true)).toBe('')
+})
+
 test('a plan name taken from a written plan file is bookkeeping, not a report: the stamp stays', async ($, on) => {
   // A row with a plan and no steps restores as a topic, with its stamp; the written heading then names the plan
   const row = JSON.stringify({ id: 'sess-1', repo: 'repo', where: '', plan: 'First prompt', done: 0, total: 0, now: '', steps: [], updatedAt: 7, ended: true })
