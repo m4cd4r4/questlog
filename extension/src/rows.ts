@@ -29,6 +29,8 @@ export type Row = {
   inTurn?: boolean;
   /** /clear moved this session's process to another session ID. */
   continuedIn?: string;
+  /** The session ID this one took over from at /clear; its tab may still carry that session's tag. */
+  continuedFrom?: string;
 };
 
 import { CLOSE_EXT, closeHolds, evidenceOf, stepKey, type Close, type CloseStep } from "../../mod/hooks/close.ts";
@@ -263,9 +265,24 @@ export const rowForTab = (rows: readonly Row[], label: string, nowMs: number): R
   const l = label.trim();
   const cutAt = l.endsWith("…") ? l.slice(0, -1).trimEnd() : undefined;
   if (!l || cutAt === "") return undefined;
-  return visibleRows(rows, nowMs).find((r) => {
+  const live = visibleRows(rows, nowMs).filter((r) => !r.ended);
+  // A tag on the label names the session outright, whatever the title says (a restart or /clear leaves the tab with
+  // an older title). The tag may be the session this one continued from, so follow that link, and continuedIn too.
+  const tag = sessionTagOf(l);
+  if (tag) {
+    const tagOf = (id: string) => id.replace(/-/g, "").slice(0, 6).toLowerCase();
+    const forTag = (t: string) => live.find((r) => tagOf(r.id) === t);
+    let hit = forTag(tag) ?? live.find((r) => r.continuedFrom && tagOf(r.continuedFrom) === tag);
+    for (let i = 0; hit?.continuedIn && i < 8; i++) {
+      const next = forTag(tagOf(hit.continuedIn));
+      if (!next) break;
+      hit = next;
+    }
+    if (hit) return hit;
+  }
+  return live.find((r) => {
     const t = r.title?.trim();
-    if (!t || r.ended) return false;
+    if (!t) return false;
     return cutAt === undefined ? t === l : t === l || t.startsWith(cutAt);
   });
 };

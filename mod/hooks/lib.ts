@@ -204,6 +204,8 @@ export type Row = {
   inTurn?: boolean
   // /clear moved this session's process to another session ID
   continuedIn?: string
+  // The session this one took over from at /clear, so a tab still tagged with that session finds this row
+  continuedFrom?: string
 }
 
 export const STALE_MS = 6 * 60 * 60 * 1000
@@ -212,7 +214,7 @@ export const rowOf = (id: string, c: Questlog, ended = false, cwd = ''): Row => 
   const { done, total, now } = stage(c.steps)
   return {
     id, repo: c.repo, where: whereLabel(c), plan: c.plan || c.topic, done, total, now, updatedAt: c.updatedAt, ended,
-    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '', ...(c.reportedAt ? { reportedAt: c.reportedAt } : {}), ...(c.inTurn ? { inTurn: true } : {}),
+    steps: c.steps, branch: c.branch, cwd, title: c.shownTitle ?? '', ...(c.reportedAt ? { reportedAt: c.reportedAt } : {}), ...(c.inTurn ? { inTurn: true } : {}), ...(c.continuedFrom ? { continuedFrom: c.continuedFrom } : {}),
   }
 }
 

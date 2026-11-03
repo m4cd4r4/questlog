@@ -235,6 +235,9 @@ test('rowOf: carries steps, branch and cwd for the sidebar', () => {
   const row = rowOf('id1', { ...EMPTY, repo: 'r', branch: 'feat/x', plan: 'P', steps, updatedAt: 5, shownTitle: '1/2 P' }, false, 'I:/r')
   expect(row).toMatchObject({ id: 'id1', repo: 'r', plan: 'P', done: 1, total: 2, now: 'b', steps, branch: 'feat/x', cwd: 'I:/r', title: '1/2 P' })
   expect(rowOf('id2', EMPTY).title).toBe('')
+  // the session a /clear replaced rides along so the sidebar can match a tab still tagged with it; absent otherwise
+  expect(rowOf('id3', { ...EMPTY, continuedFrom: 'a3fea4bb-0000-4000-8000-000000000000' }).continuedFrom).toBe('a3fea4bb-0000-4000-8000-000000000000')
+  expect('continuedFrom' in rowOf('id2', EMPTY)).toBe(false)
 })
 
 test('noteContext: empty note says nothing, a note carries its text and path', () => {
