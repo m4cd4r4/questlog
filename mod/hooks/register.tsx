@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Questlog, Step } from '../types'
 import {
   CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
-  sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
+  movesWork, sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
 
@@ -191,7 +191,8 @@ async function syncPane($: EngineInterface) {
 }
 
 let paneTick: { cancel: () => void } | undefined
-// Tool calls since the last report: what turnEndNudge reads
+// Tool calls that could have moved a step since the last report (lib.ts movesWork): what turnEndNudge reads.
+// A turn of reads alone owes no report, or every lookup would cost a blocked turn and a questlog call (#7)
 let toolsSinceReport = 0
 
 export const register: Register = (on, options) => {
@@ -319,7 +320,7 @@ export const register: Register = (on, options) => {
   // No catch here: a catch that calls next again would run a failed tool a second time
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (!/questlog/.test(e.tool)) toolsSinceReport++
+    if (movesWork(e.tool)) toolsSinceReport++
     return ran
   })
 
