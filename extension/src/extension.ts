@@ -190,6 +190,7 @@ const STEP_MARK: Record<AccountedStep["status"], string> = {
 };
 const MAX_TOOLTIP_STEPS = 25;
 const SHOW_DETAILS_COMMAND = "questlog.showDetails";
+const DETAILS_VIEW_TYPE = "questlog.details";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -465,8 +466,11 @@ export function activate(context: vscode.ExtensionContext) {
     tree.folders = folders();
     tree.openTags = new Set(vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => sessionTagOf(t.label))).filter((t): t is string => !!t));
     const now = Date.now();
-    // A Claude tab's label is the title the mod set, which its row records
-    const label = vscode.window.tabGroups.activeTabGroup.activeTab?.label ?? "";
+    // A Claude tab's label is the title the mod set, which its row records. Questlog's own details page carries the plan
+    // as its title too, so it is never read as the session's tab (it would mark the session "here" and silence Needs you).
+    const active = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const isDetails = active?.input instanceof vscode.TabInputWebview && active.input.viewType.includes(DETAILS_VIEW_TYPE);
+    const label = isDetails ? "" : active?.label ?? "";
     const tab = rowForTab(tree.rows, label, now);
     // A Claude tab with no row yet (no plan or message) is a session of its own: it must not inherit the last tab's focus
     const planless = !tab && isSessionTab(label);
@@ -526,7 +530,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!row) return;
       detailsId = row.id;
       if (!details) {
-        details = vscode.window.createWebviewPanel("questlog.details", "Session", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, {});
+        details = vscode.window.createWebviewPanel(DETAILS_VIEW_TYPE, "Session", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true }, {});
         details.onDidDispose(() => {
           details = undefined;
         });
