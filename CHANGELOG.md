@@ -2,7 +2,7 @@
 
 All notable changes to the Questlog mod and VS Code extension (called Session Compass before 1.0.0). Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mod and the extension are versioned separately until 1.0.0.
 
-## 1.0.0 - unreleased
+## 1.0.0 - 2026-11-03
 
 ### Changed
 - Session Compass is now Questlog. The tool and the `/compass` command are `questlog` and `/questlog`, the plugin ID is `questlog`, and settings moved from `sessionCompass.*` to `questlog.*`.
