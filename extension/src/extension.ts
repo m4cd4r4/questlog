@@ -23,6 +23,8 @@ import {
 const VIEW = "questlog.sessions";
 // Ages in the tree and staleness tick on with no file change
 const TICK_MS = 30_000;
+// Every this many ticks (5 minutes) the rows folder is rescanned, in case the watcher missed a change
+const RESCAN_TICKS = 10;
 // `claude agents --json` starts a process: ask at most every questlog.agentViewSeconds, never faster than this
 const MIN_LIVE_S = 5;
 // An unfocused window keeps showing a shared answer up to this many intervals old
@@ -413,11 +415,13 @@ export function activate(context: vscode.ExtensionContext) {
     running = (async () => {
       do {
         again = false;
-        await refreshOnce();
+        try {
+          await refreshOnce();
+        } catch (e) {
+          log.appendLine(`${new Date().toISOString()} refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
       } while (again);
-    })()
-      .catch((e) => log.appendLine(`${new Date().toISOString()} refresh failed: ${e instanceof Error ? e.message : String(e)}`))
-      .finally(() => (running = undefined));
+    })().finally(() => (running = undefined));
   };
 
   /** The panel, details page, badge and status bar, from what is in memory. Sync, and reads no file. */
@@ -479,8 +483,12 @@ export function activate(context: vscode.ExtensionContext) {
   };
   startWatch();
   tree.onVisible = update;
+  let ticks = 0;
   const tick = setInterval(() => {
     startWatch();
+    // fs.watch can drop events (a burst overflows its buffer, a network or WSL folder): a rescan now and then heals what it missed.
+    // Files whose size and mtime have not moved are not read again, so this costs a readdir and a stat per file, async
+    if (++ticks % RESCAN_TICKS === 0) refresher.changed();
     update();
   }, TICK_MS);
   // Cheap when the shared answer is still fresh; the interval setting decides how often it really asks

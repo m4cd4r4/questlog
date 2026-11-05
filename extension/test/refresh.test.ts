@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Refresher } from "../src/refresh.ts";
@@ -43,6 +43,22 @@ test("only named files are reread; a nameless change rescans and finds files nob
   assert.deepEqual((await r.refresh(input())).rows.map((x) => x.id).sort(), [ids[1], ids[2]]);
   r.changed();
   assert.deepEqual((await r.refresh(input())).rows.map((x) => x.id).sort(), [ids[1], ids[2], fourth]);
+});
+
+test("a file that failed to read is read again by the next rescan, even with its size and mtime unchanged", async () => {
+  const r = new Refresher(() => dir);
+  const path = join(dir, `${ids[0]}.json`);
+  const good = JSON.stringify(row(ids[0]));
+  // Whole seconds, so both versions carry exactly the same mtime
+  const t = Math.floor(Date.now() / 1000);
+  writeFileSync(path, good.slice(0, -1) + " ");
+  utimesSync(path, t, t);
+  assert.equal((await r.refresh(input())).rows.length, 2);
+  writeFileSync(path, good);
+  utimesSync(path, t, t);
+  assert.equal(statSync(path).mtimeMs, t * 1000);
+  r.changed();
+  assert.equal((await r.refresh(input())).rows.length, 3);
 });
 
 test("fresh reads one session's row and close from disk before any watcher event, for the hand-close check", async () => {

@@ -111,7 +111,9 @@ export class Refresher {
         if (isRow(v)) e.row = v;
       }
     } catch {
-      // half-written file: left out until the next change event reads it whole
+      // Half-written, or held by another process: not remembered, so the next change event or rescan reads it again
+      this.entries.delete(name);
+      return;
     }
     this.entries.set(name, e);
   }
@@ -170,6 +172,8 @@ export class Refresher {
       if (!c) continue;
       try {
         await writeFile(join(this.seenDir, `${r.id}${CLOSE_EXT}`), JSON.stringify(c));
+        // So a refresh before the watcher's event does not write the same close again
+        this.changed(`${r.id}${CLOSE_EXT}`);
       } catch (e) {
         this.onWriteError(e);
       }
