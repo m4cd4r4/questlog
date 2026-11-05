@@ -1,26 +1,30 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, watch, writeFileSync, type FSWatcher } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { decodeCache, encodeCache, parseAgents, type LiveState } from "./live";
 import { MIGRATED_KEY, migrateSettings, OLD_SECTION } from "./migrate";
 import { buildModel, parseMessage, type WebMessage } from "./model";
+import { DISMISSED_FILE, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
 import { pageHtml } from "./webview";
 import {
-  COPY_RESUME_COMMAND, DEFAULT_RESUME, isOfferedByPlans, OPEN_WORKTREE_COMMAND, openSlices, planOnlyRepos, plansForRepo, plansFromRegistry, planSummary, resumeFromArg,
-  sliceDescription, sliceLabel, worktreeFromArg, type ParentPlan, type RegistryEntry, type Slice, type SliceState,
+  COPY_RESUME_COMMAND, DEFAULT_RESUME, isOfferedByPlans, OPEN_WORKTREE_COMMAND, openSlices, planOnlyRepos, plansForRepo, planSummary, resumeFromArg,
+  sliceDescription, sliceLabel, worktreeFromArg, type ParentPlan, type Slice, type SliceState,
 } from "./plans";
 import {
-  bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isRow, isStale, NOTE_FILE, noteLines, PANE_COMMAND, paneLink, paneOpenOf, planOf,
-  canResume, checkClose, CLOSE_EXT, closeByHand, closeFrom, dismissedFrom, handCloseBlocked, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, withCloses, type Close, type CloseStep, type Dismissed,
-  sessionIdFromArg, statusText, stepsOf, visibleRows, accountedSteps, doneOf, isCheckablePath, nowOf, type AccountedStep, type Group, type Row,
+  bar, COPY_ID_COMMAND, copyIdLink, description, groupByRepo, inOpenFolder, isInWorkspace, isStale, NOTE_FILE, PANE_COMMAND, paneLink, paneOpenOf, planOf,
+  canResume, CLOSE_EXT, closeByHand, dismissedFrom, handCloseBlocked, hasWorkLeft, isSessionTab, resumeCommandOf, rowForTab, rowForWorkspace, sessionTagOf, type Close, type CloseStep, type Dismissed,
+  sessionIdFromArg, statusText, stepsOf, visibleRows, accountedSteps, doneOf, nowOf, type AccountedStep, type Group, type Row,
 } from "./rows";
 
 const VIEW = "questlog.sessions";
 // Ages in the tree and staleness tick on with no file change
 const TICK_MS = 30_000;
+// Every this many ticks (5 minutes) the rows folder is rescanned, in case the watcher missed a change
+const RESCAN_TICKS = 10;
 // `claude agents --json` starts a process: ask at most every questlog.agentViewSeconds, never faster than this
 const MIN_LIVE_S = 5;
 // An unfocused window keeps showing a shared answer up to this many intervals old
@@ -29,59 +33,17 @@ const STALE_LIVE_TICKS = 6;
 /** Same folder the mod writes to: CLAUDE_CONFIG_DIR, else ~/.claude. */
 const rowsDir = () => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "questlog");
 
-/** The rows and the closes beside them, not yet joined: update runs the step checks on the rows before withCloses. */
-function readRows(): { rows: Row[]; closes: Map<string, Close> } {
-  const rows: Row[] = [];
-  const closes = new Map<string, Close>();
-  let names: string[];
-  try {
-    names = readdirSync(rowsDir());
-  } catch {
-    return { rows, closes };
-  }
-  for (const n of names) {
-    try {
-      const text = n.endsWith(".json") || n.endsWith(CLOSE_EXT) ? readFileSync(join(rowsDir(), n), "utf8") : "";
-      if (n.endsWith(CLOSE_EXT)) {
-        const c = closeFrom(text);
-        if (c) closes.set(n.slice(0, -CLOSE_EXT.length), c);
-      } else if (text) {
-        const v: unknown = JSON.parse(text);
-        if (isRow(v)) rows.push(v);
-      }
-    } catch {
-      // half-written file; the next change event reads it whole
-    }
-  }
-  return { rows, closes };
-}
-
 const closePath = (id: string) => join(rowsDir(), `${id}${CLOSE_EXT}`);
+
+// The rows folder, held in memory; extension writes say which file they touched, so the next refresh sees them at once
+const refresher = new Refresher(rowsDir, (e) => void vscode.window.showWarningMessage(`Questlog could not close that card: ${e instanceof Error ? e.message : String(e)}`));
 
 function writeClose(id: string, close: Close) {
   try {
     writeFileSync(closePath(id), JSON.stringify(close));
+    refresher.changed(`${id}${CLOSE_EXT}`);
   } catch (e) {
     void vscode.window.showWarningMessage(`Questlog could not close that card: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-/** A step's path, read for existence only, never run or opened: absolute as given, else inside the session's folder. */
-const pathExists = (r: Row) => (p: string) => {
-  if (!isCheckablePath(p)) return undefined;
-  if (isAbsolute(p)) return existsSync(p);
-  return r.cwd ? existsSync(join(r.cwd, p)) : undefined;
-};
-
-/** Cards whose session is gone close themselves once every open step's path checks out; a close already on disk, undone or not, holds. */
-function runChecks(rows: readonly Row[], closes: Map<string, Close>, now: number, live: ReadonlyMap<string, LiveState> | undefined) {
-  for (const r of rows) {
-    const gone = r.ended || isStale(r, now) || (live !== undefined && !live.has(r.id));
-    if (!gone) continue;
-    const c = checkClose(r, now, pathExists(r), closes.get(r.id));
-    if (!c) continue;
-    writeClose(r.id, c);
-    closes.set(r.id, c);
   }
 }
 
@@ -101,7 +63,7 @@ function setPaneOpen(id: string, open: boolean) {
   writeFileSync(paneFlag(id), JSON.stringify({ open }));
 }
 
-const dismissedPath = () => join(rowsDir(), "dismissed.json");
+const dismissedPath = () => join(rowsDir(), DISMISSED_FILE);
 
 function readDismissed() {
   try {
@@ -119,35 +81,27 @@ function saveDismissed(id: string, updatedAt: number, liveIds: readonly string[]
   try {
     writeFileSync(tmp, JSON.stringify(next));
     renameSync(tmp, dismissedPath());
+    refresher.changed(DISMISSED_FILE);
   } catch (e) {
     void vscode.window.showWarningMessage(`Questlog could not hide that session: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
-// Not a .json file, so readRows never mistakes it for a session
-const liveCachePath = () => join(rowsDir(), "live.cache");
+const liveCachePath = () => join(rowsDir(), LIVE_CACHE_FILE);
 
 /** Swapped in whole, like the dismissed file, so a second window never reads half of it. */
-function writeLiveCache(live: Map<string, LiveState> | undefined) {
+async function writeLiveCache(live: Map<string, LiveState> | undefined) {
   const tmp = `${liveCachePath()}.${process.pid}.tmp`;
   try {
-    mkdirSync(rowsDir(), { recursive: true });
-    writeFileSync(tmp, encodeCache(Date.now(), live));
-    renameSync(tmp, liveCachePath());
+    await mkdir(rowsDir(), { recursive: true });
+    await writeFile(tmp, encodeCache(Date.now(), live));
+    await rename(tmp, liveCachePath());
   } catch {
     // no cache: the next window to ask just asks for itself
   }
 }
 
 const notePath = () => join(rowsDir(), NOTE_FILE);
-
-function readNote(): string[] {
-  try {
-    return noteLines(readFileSync(notePath(), "utf8"));
-  } catch {
-    return [];
-  }
-}
 
 const folders = () => (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
 
@@ -158,29 +112,6 @@ const registryPath = () => {
   const set = vscode.workspace.getConfiguration("questlog").get<string>("registryPath")?.trim();
   return set ? expandHome(set) : join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "workspaces", "registry.json");
 };
-
-// The registry runs to megabytes: parse it again only when the file changes
-let registryCache: { path: string; mtimeMs: number; entries: RegistryEntry[] } | undefined;
-
-function readRegistry(): RegistryEntry[] {
-  const path = registryPath();
-  try {
-    const { mtimeMs } = statSync(path);
-    if (registryCache?.path === path && registryCache.mtimeMs === mtimeMs) return registryCache.entries;
-    const v = JSON.parse(readFileSync(path, "utf8")) as { entries?: unknown };
-    const entries = Array.isArray(v.entries) ? (v.entries as RegistryEntry[]) : [];
-    registryCache = { path, mtimeMs, entries };
-    return entries;
-  } catch {
-    // no registry (plans are optional), or one being rewritten: keep what was read last
-    return registryCache?.path === path ? registryCache.entries : [];
-  }
-}
-
-function readPlans(): ParentPlan[] {
-  const resumeCommand = vscode.workspace.getConfiguration("questlog").get<string>("resumeCommand")?.trim() || DEFAULT_RESUME;
-  return plansFromRegistry(readRegistry(), { exists: existsSync, resumeCommand });
-}
 
 const STEP_MARK: Record<AccountedStep["status"], string> = {
   done: "$(pass-filled)",
@@ -221,7 +152,7 @@ li.now{font-weight:600;color:var(--vscode-textLink-foreground)}
 </body></html>`;
 }
 
-function tooltip(r: Row, now: number, scope: string) {
+function tooltip(r: Row, now: number, scope: string, paneOpen: boolean) {
   const md = new vscode.MarkdownString(undefined, true);
   md.appendMarkdown(`**${planOf(r)}**${scope ? ` · ${scope}` : ""}\n\n`);
   const done = doneOf(r);
@@ -240,7 +171,7 @@ function tooltip(r: Row, now: number, scope: string) {
   const where = [r.repo, r.where || r.branch].filter(Boolean).join(" · ");
   if (where) md.appendMarkdown(`${where}\n\n`);
   if (r.cwd) md.appendMarkdown(`\`${r.cwd}\`\n\n`);
-  md.appendMarkdown(`Session \`${r.id}\` [Copy](${copyIdLink(r.id)}) · [${isPaneOpen(r.id) ? "Hide panel" : "Show panel"}](${paneLink(r.id)})\n\n`);
+  md.appendMarkdown(`Session \`${r.id}\` [Copy](${copyIdLink(r.id)}) · [${paneOpen ? "Hide panel" : "Show panel"}](${paneLink(r.id)})\n\n`);
   md.isTrusted = { enabledCommands: [COPY_ID_COMMAND, PANE_COMMAND] };
   md.appendMarkdown(`Updated ${new Date(r.updatedAt).toLocaleTimeString()}${isStale(r, now) ? " (idle)" : ""}`);
   return md;
@@ -388,8 +319,8 @@ export function activate(context: vscode.ExtensionContext) {
     }
     // The session may have reported, or another session closed the card, while the prompts were up: read the disk,
     // not tree.rows (the watcher may not have fired yet), so neither is overwritten without a word
-    const fresh = readRows();
-    const blocked = handCloseBlocked(row, fresh.rows.find((x) => x.id === id), fresh.closes.get(id));
+    const fresh = await refresher.fresh(id);
+    const blocked = handCloseBlocked(row, fresh.row, fresh.close);
     if (blocked) return void vscode.window.showInformationMessage(blocked);
     writeClose(row.id, closeByHand(row, steps, Date.now()));
     update();
@@ -408,36 +339,34 @@ export function activate(context: vscode.ExtensionContext) {
   const log = vscode.window.createOutputChannel("Questlog");
   let lastOutcome = "";
   let polling = false;
-  const adopt = (next: Map<string, LiveState> | undefined) => {
+  /** Takes the answer. Off the refresh path, a change redraws. */
+  const adopt = (next: Map<string, LiveState> | undefined, redraw = true) => {
     const same = (!next && !tree.live) || (next && tree.live && next.size === tree.live.size && [...next].every(([k, v]) => { const o = tree.live!.get(k); return o?.status === v.status && o.waitingFor === v.waitingFor; }));
     tree.live = next;
-    if (!same) update();
+    if (!same && redraw) update();
   };
-  const readLiveCache = (maxAgeMs: number) => {
-    try {
-      return decodeCache(readFileSync(liveCachePath(), "utf8"), Date.now(), maxAgeMs);
-    } catch {
-      return undefined;
-    }
+  const readLiveCache = async (maxAgeMs: number) => {
+    const text = await readText(liveCachePath());
+    return text === undefined ? undefined : decodeCache(text, Date.now(), maxAgeMs);
   };
   // The command costs about half a CPU-second, so the windows share one answer per interval, and only a window showing the Questlog panel asks
-  const pollLive = () => {
+  const pollLive = async (redraw = true) => {
     const cfg = vscode.workspace.getConfiguration("questlog");
     if (!cfg.get<boolean>("useAgentView", true)) {
       tree.live = undefined;
       return;
     }
     const gap = Math.max(MIN_LIVE_S, cfg.get<number>("agentViewSeconds", 10)) * 1000;
-    const fresh = readLiveCache(gap);
-    if (fresh) return adopt(fresh.live);
+    const fresh = await readLiveCache(gap);
+    if (fresh) return adopt(fresh.live, redraw);
     if (!tree.view?.visible) {
       // Nothing here to draw it on. Another window may be refreshing it; until it does, a short-lived answer beats none, and an old one is dropped
-      return adopt(readLiveCache(STALE_LIVE_TICKS * gap)?.live);
+      return adopt((await readLiveCache(STALE_LIVE_TICKS * gap))?.live, redraw);
     }
     if (polling) return;
     polling = true;
     // Mark the cache fresh at once, carrying the old answer, so a second window with the panel open does not ask too
-    writeLiveCache(readLiveCache(STALE_LIVE_TICKS * gap)?.live);
+    await writeLiveCache((await readLiveCache(STALE_LIVE_TICKS * gap))?.live);
     // Fixed arguments, no user input; the shell is there because npm installs claude as claude.cmd on Windows
     const t0 = Date.now();
     execFile("claude", ["agents", "--json"], { timeout: 8000, windowsHide: true, shell: true, maxBuffer: 1 << 20 }, (err, out) => {
@@ -449,20 +378,55 @@ export function activate(context: vscode.ExtensionContext) {
         log.appendLine(`${new Date().toISOString()} claude agents --json ${outcome} (${Date.now() - t0} ms)`);
         lastOutcome = outcome;
       }
-      writeLiveCache(next);
+      void writeLiveCache(next);
       adopt(next);
     });
   };
 
+  // The shown session's pane flag, read async after each draw; a toggle here sets it at once
+  const paneOpen = new Map<string, boolean>();
+  const readPane = async (id: string) => {
+    const open = paneOpenOf((await readText(paneFlag(id))) ?? "");
+    if (paneOpen.get(id) === open) return;
+    paneOpen.set(id, open);
+    draw();
+  };
+
+  /** Everything the host reads from disk, async; then one draw from memory. */
+  const refreshOnce = async () => {
+    await pollLive(false);
+    const resumeCommand = vscode.workspace.getConfiguration("questlog").get<string>("resumeCommand")?.trim() || DEFAULT_RESUME;
+    const snap = await refresher.refresh({ now: Date.now(), live: tree.live, registryPath: registryPath(), resumeCommand });
+    tree.rows = snap.rows;
+    tree.note = snap.note;
+    tree.dismissed = snap.dismissed;
+    tree.plans = snap.plans;
+    draw();
+  };
+
+  // One refresh at a time; a call while one runs asks for one more after it, so no change is dropped
+  let running: Promise<void> | undefined;
+  let again = false;
   const update = () => {
-    pollLive();
-    const { rows, closes } = readRows();
-    runChecks(rows, closes, Date.now(), tree.live);
-    tree.rows = withCloses(rows, closes);
+    if (running) {
+      again = true;
+      return;
+    }
+    running = (async () => {
+      do {
+        again = false;
+        try {
+          await refreshOnce();
+        } catch (e) {
+          log.appendLine(`${new Date().toISOString()} refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } while (again);
+    })().finally(() => (running = undefined));
+  };
+
+  /** The panel, details page, badge and status bar, from what is in memory. Sync, and reads no file. */
+  const draw = () => {
     drawDetails();
-    tree.note = readNote();
-    tree.dismissed = readDismissed();
-    tree.plans = readPlans();
     tree.folders = folders();
     tree.openTags = new Set(vscode.window.tabGroups.all.flatMap((g) => g.tabs.map((t) => sessionTagOf(t.label))).filter((t): t is string => !!t));
     const now = Date.now();
@@ -483,9 +447,10 @@ export function activate(context: vscode.ExtensionContext) {
     if (tree.view) tree.view.badge = live.length > 0 ? { value: live.length, tooltip: `${live.length} live session${live.length === 1 ? "" : "s"}` } : undefined;
     if (shown) {
       status.text = `$(questlog-logo) ${statusText(shown)}`;
-      status.tooltip = tooltip(shown, now, focused ? "this tab" : "this window");
+      status.tooltip = tooltip(shown, now, focused ? "this tab" : "this window", paneOpen.get(shown.id) ?? false);
       status.command = { title: "Show or hide the questlog panel", command: PANE_COMMAND, arguments: [shown.id] };
       status.show();
+      void readPane(shown.id);
     } else {
       status.hide();
     }
@@ -501,10 +466,16 @@ export function activate(context: vscode.ExtensionContext) {
   const startWatch = () => {
     if (watcher) return;
     try {
-      watcher = watch(rowsDir(), soon);
+      // A watcher that names the file rereads only that file; one that cannot, or a new one that missed changes, rescans the folder
+      watcher = watch(rowsDir(), (_event, name) => {
+        refresher.changed(name);
+        soon();
+      });
+      refresher.changed();
       watcher.on("error", () => {
         watcher?.close();
         watcher = undefined;
+        refresher.changed();
       });
     } catch {
       // folder not made yet: the tick retries
@@ -512,12 +483,16 @@ export function activate(context: vscode.ExtensionContext) {
   };
   startWatch();
   tree.onVisible = update;
+  let ticks = 0;
   const tick = setInterval(() => {
     startWatch();
+    // fs.watch can drop events (a burst overflows its buffer, a network or WSL folder): a rescan now and then heals what it missed.
+    // Files whose size and mtime have not moved are not read again, so this costs a readdir and a stat per file, async
+    if (++ticks % RESCAN_TICKS === 0) refresher.changed();
     update();
   }, TICK_MS);
   // Cheap when the shared answer is still fresh; the interval setting decides how often it really asks
-  const liveTick = setInterval(pollLive, MIN_LIVE_S * 1000);
+  const liveTick = setInterval(() => void pollLive(), MIN_LIVE_S * 1000);
 
   context.subscriptions.push(
     log,
@@ -551,6 +526,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!id) return;
       const open = !isPaneOpen(id);
       setPaneOpen(id, open);
+      paneOpen.set(id, open);
       vscode.window.setStatusBarMessage(open ? "Questlog panel on for this session" : "Questlog panel off for this session", 3000);
       update();
     }),
