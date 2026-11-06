@@ -36,6 +36,6 @@ Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on 
 
 | Wave | Slug | State |
 |---|---|---|
-| 1 | freshness | not started |
-| 2 | card-retention | blocked on wave 1 |
+| 1 | freshness | done (#23) |
+| 2 | card-retention | ready |
 | 3 | stats | blocked on wave 2 |

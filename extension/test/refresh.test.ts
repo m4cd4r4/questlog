@@ -61,6 +61,20 @@ test("a file that failed to read is read again by the next rescan, even with its
   assert.equal((await r.refresh(input())).rows.length, 3);
 });
 
+test("a recent row rewritten at the same size and mtime is seen by the next rescan", async () => {
+  const r = new Refresher(() => dir);
+  const path = join(dir, `${ids[0]}.json`);
+  // Whole seconds, so both versions carry exactly the same mtime, as on a 1-2 s filesystem
+  const t = Math.floor(Date.now() / 1000);
+  writeFileSync(path, JSON.stringify(row(ids[0], { now: "aaa" })));
+  utimesSync(path, t, t);
+  await r.refresh(input());
+  writeFileSync(path, JSON.stringify(row(ids[0], { now: "bbb" })));
+  utimesSync(path, t, t);
+  r.changed();
+  assert.equal((await r.refresh(input())).rows.find((x) => x.id === ids[0])!.now, "bbb");
+});
+
 test("fresh reads one session's row and close from disk before any watcher event, for the hand-close check", async () => {
   const r = new Refresher(() => dir);
   await r.refresh(input());

@@ -20,6 +20,9 @@ export type Snapshot = { rows: Row[]; note: string[]; dismissed: Dismissed; plan
 export const DISMISSED_FILE = "dismissed.json";
 // Open at most this many files at once: a first read of 1,000 would otherwise ask for 1,000 handles
 const BATCH = 32;
+// Freshness is size plus mtime, which misses a same-length rewrite inside one mtime tick (1-2 s on FAT, SMB, some WSL
+// mounts). A rescan rereads every row updated this recently regardless; longer than the 5-minute rescan, so none slips between two.
+export const RECENT_MS = 10 * 60 * 1000;
 
 type Entry = { mtimeMs: number; size: number; row?: Row; close?: Close; text?: string };
 
@@ -60,15 +63,15 @@ export class Refresher {
   }
 
   /** Bring the in-memory folder up to date. A change that lands while a read runs is taken by the next one, not dropped. */
-  private async sync() {
+  private async sync(now: number) {
     for (;;) {
       if (this.loading) await this.loading;
-      else if (this.full || this.dirty.size || this.dir() !== this.seenDir) this.loading = this.load().finally(() => (this.loading = null));
+      else if (this.full || this.dirty.size || this.dir() !== this.seenDir) this.loading = this.load(now).finally(() => (this.loading = null));
       else return;
     }
   }
 
-  private async load() {
+  private async load(now: number) {
     const dir = this.dir();
     if (dir !== this.seenDir) {
       this.entries.clear();
@@ -76,6 +79,7 @@ export class Refresher {
       this.seenDir = dir;
     }
     let names: string[];
+    const rescan = this.full;
     if (this.full) {
       this.full = false;
       this.dirty.clear();
@@ -86,7 +90,8 @@ export class Refresher {
       names = [...this.dirty].filter(accept);
       this.dirty.clear();
     }
-    await batched(names, (n) => this.reread(n, false));
+    const recent = (n: string) => { const r = this.entries.get(n)?.row; return r !== undefined && now - r.updatedAt < RECENT_MS; };
+    await batched(names, (n) => this.reread(n, rescan && recent(n)));
   }
 
   /** Read one file again if its size or mtime moved, or always when `force`. */
@@ -131,13 +136,13 @@ export class Refresher {
 
   /** One session's row and close read from disk now, not from memory: the hand-close checks them after its prompts. */
   async fresh(id: string): Promise<{ row: Row | undefined; close: Close | undefined }> {
-    await this.sync();
+    await this.sync(Date.now());
     await Promise.all([this.reread(`${id}.json`, true), this.reread(`${id}${CLOSE_EXT}`, true)]);
     return { row: this.entries.get(`${id}.json`)?.row, close: this.entries.get(`${id}${CLOSE_EXT}`)?.close };
   }
 
   async refresh({ now, live, registryPath, resumeCommand }: RefreshInput): Promise<Snapshot> {
-    await this.sync();
+    await this.sync(now);
     const { rows, closes } = this.current();
     await this.runChecks(rows, closes, now, live);
     const text = (n: string) => this.entries.get(n)?.text;
