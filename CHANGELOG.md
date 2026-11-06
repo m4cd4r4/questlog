@@ -2,6 +2,18 @@
 
 All notable changes to the Questlog mod and VS Code extension (called Session Compass before 1.0.0). Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mod and the extension are versioned separately until 1.0.0.
 
+## 1.1.0 - unreleased
+
+### Added
+- `/questlog-stats` prints this month: sessions, how they ended, steps done, then one line per repo. The sidebar shows the same under "This month".
+- Old rows are deleted, so `~/.claude/questlog` stops growing. Once a day, at the start of a session, the mod deletes rows (and their `.close`) whose session last updated 7 days ago if finished, 30 days ago if steps were left. Each row first gets a line in `~/.claude/questlog/ledger/YYYY-MM.jsonl`, which `/questlog-stats` reads. Nothing else in the folder is deleted.
+
+### Fixed
+- The sidebar no longer blocks VS Code. It reads the rows folder async and keeps it in memory: a refresh after a row write took about a second on a 1,100-row folder, and now takes 2 to 4 ms.
+- A row rewritten at the same size within one file-time tick is no longer missed until it changes again.
+- After a restart or a `/clear`, a tab finds its card by the session tag in its label, so it keeps its `this tab` chip and the status bar item.
+- After a restart, the first prompt sends the plan title to the tab again. A tab name set by hand is overwritten on restart.
+
 ## 1.0.0 - 2026-11-03
 
 ### Changed
