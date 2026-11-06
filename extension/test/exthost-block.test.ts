@@ -49,3 +49,20 @@ test("one refresh after a row write holds the extension host under 50 ms (median
   console.log(`refresh: longest block median ${median.toFixed(1)} ms, max ${sorted[RUNS - 1].toFixed(1)} ms over ${RUNS} runs`);
   assert.ok(median < BUDGET_MS, `median block ${median.toFixed(1)} ms is over ${BUDGET_MS} ms`);
 });
+
+test("a 5-minute rescan that rereads every recently updated row holds the extension host under 50 ms (median of 20)", async () => {
+  const refresher = new Refresher(() => dir);
+  const input = { now: NOW, live: new Map([[SESSIONS[0], { status: "busy" as const }]]), registryPath: join(root, "workspaces", "registry.json"), resumeCommand: "x {slug}" };
+  // Far more sessions active in the last few minutes than a real day has: each is reread on every rescan
+  for (let i = 0; i < 30; i++) writeFileSync(join(dir, `${row(i).id}.json`), JSON.stringify(row(i, NOW - i * 1000)));
+  await refresher.refresh(input);
+  const blocks: number[] = [];
+  for (let n = 0; n < RUNS; n++) {
+    refresher.changed();
+    blocks.push(await longestBlock(() => refresher.refresh(input)));
+  }
+  const sorted = [...blocks].sort((a, b) => a - b);
+  const median = sorted[Math.floor(RUNS / 2)];
+  console.log(`rescan: longest block median ${median.toFixed(1)} ms, max ${sorted[RUNS - 1].toFixed(1)} ms over ${RUNS} runs`);
+  assert.ok(median < BUDGET_MS, `median block ${median.toFixed(1)} ms is over ${BUDGET_MS} ms`);
+});
