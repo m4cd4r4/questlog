@@ -8,6 +8,7 @@
 import { access, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
 import type { LiveState } from "./live.ts";
+import { entriesFromLedger, monthOf, type StatEntry } from "../../mod/hooks/stats.ts";
 import { plansFromRegistry, type ParentPlan, type RegistryEntry } from "./plans.ts";
 import {
   checkClose, CLOSE_EXT, closeFrom, dismissedFrom, hasWorkLeft, isCheckablePath, isRow, isStale, NOTE_FILE, noteLines, PARKED_MS, stepsOf, withCloses,
@@ -217,3 +218,32 @@ export class Refresher {
 export const LIVE_CACHE_FILE = "live.cache";
 
 export const readText = (path: string) => readFile(path, "utf8").catch(() => undefined);
+
+/**
+ * This month's ledger (`<rows>/ledger/YYYY-MM.jsonl`, written by the mod's retention job once a day), for the panel's
+ * "This month". Off the refresh path: the host asks on its own slow timer. One stat when nothing changed, and a
+ * failed stat when there is no ledger yet. The `.prev` crash copy is not read.
+ */
+export class LedgerReader {
+  private cache: { path: string; mtimeMs: number; size: number; entries: StatEntry[] } | undefined;
+  private readonly dir: () => string;
+
+  constructor(dir: () => string) {
+    this.dir = dir;
+  }
+
+  async read(now: number): Promise<StatEntry[]> {
+    const path = join(this.dir(), "ledger", `${monthOf(now)}.jsonl`);
+    try {
+      const { mtimeMs, size } = await stat(path);
+      const hit = this.cache;
+      if (hit?.path === path && hit.mtimeMs === mtimeMs && hit.size === size) return hit.entries;
+      const entries = entriesFromLedger(await readFile(path, "utf8"));
+      this.cache = { path, mtimeMs, size, entries };
+      return entries;
+    } catch {
+      this.cache = undefined;
+      return [];
+    }
+  }
+}

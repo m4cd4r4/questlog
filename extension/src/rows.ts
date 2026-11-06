@@ -17,6 +17,8 @@ export type Row = {
   updatedAt: number;
   /** When the session last spoke for itself. Reopening a tab moves updatedAt, not this; rows from before it lack it. */
   reportedAt?: number;
+  /** The row's first write (mod lib.ts rowToWrite); rows from before it lack it. */
+  startedAt?: number;
   ended?: boolean;
   steps?: Step[];
   branch?: string;

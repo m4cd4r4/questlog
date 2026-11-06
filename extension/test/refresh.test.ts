@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Refresher } from "../src/refresh.ts";
+import { LedgerReader, Refresher } from "../src/refresh.ts";
 
 const NOW = Date.parse("2026-11-05T00:00:00Z");
 const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];
@@ -98,4 +98,29 @@ test("fresh reads one session's row and close from disk before any watcher event
   const f = await r.fresh(ids[2]);
   assert.equal(f.row?.reportedAt, NOW);
   assert.equal(f.close?.by, ids[0]);
+});
+
+test("LedgerReader: no ledger folder reads as none; a month's file is read whole lines only, the .prev copy and other months left alone", async () => {
+  const reader = new LedgerReader(() => dir);
+  const nov = new Date(2026, 10, 6, 12).getTime();
+  assert.deepEqual(await reader.read(nov), []);
+  mkdirSync(join(dir, "ledger"));
+  const line = (id: string) => JSON.stringify({ id, plan: "P", done: 1, total: 1, repo: "app", firstAt: null, lastAt: nov, ended: "finished" });
+  writeFileSync(join(dir, "ledger", "2026-11.jsonl"), `${line("a")}\n{"id":"to`);
+  writeFileSync(join(dir, "ledger", ".2026-11.jsonl.prev"), line("p"));
+  writeFileSync(join(dir, "ledger", "2026-10.jsonl"), line("o"));
+  assert.deepEqual((await reader.read(nov)).map((e) => e.id), ["a"]);
+});
+
+test("LedgerReader: an unchanged file is not read again; a grown one is", async () => {
+  const reader = new LedgerReader(() => dir);
+  const nov = new Date(2026, 10, 6, 12).getTime();
+  mkdirSync(join(dir, "ledger"));
+  const file = join(dir, "ledger", "2026-11.jsonl");
+  const line = (id: string) => `${JSON.stringify({ id, plan: "P", done: 1, total: 1, repo: "app", firstAt: null, lastAt: nov, ended: "finished" })}\n`;
+  writeFileSync(file, line("a"));
+  const first = await reader.read(nov);
+  assert.equal(await reader.read(nov), first);
+  writeFileSync(file, line("a") + line("b"));
+  assert.deepEqual((await reader.read(nov)).map((e) => e.id), ["a", "b"]);
 });

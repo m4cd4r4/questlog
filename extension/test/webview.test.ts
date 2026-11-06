@@ -106,3 +106,16 @@ test("persisted open keys for cards, steps and ended lines of repos no longer sh
   assert.deepEqual([...last.open!].sort(), ["c:a", "e:shop"]);
   assert.deepEqual([...last.seen!].sort(), ["c:a", "e:shop"]);
 });
+
+test("This month: a section after the sessions with its count, the outcome lines and one line per repo; closed by hand it keeps only its heading", () => {
+  const month = { sessions: 3, head: "November 2026: 3 sessions", lines: ["2 finished · 1 closed", "9 of 12 steps done"], repos: ["r · 2 sessions · 1 finished · 5 of 8 steps"] };
+  const model = { summary, groups: [{ repo: "shop", cards: [card("a")], ended: [] }], note: [], month };
+  const els = walk(render(model));
+  const sec = els.find((e) => e.className === "sec" && e.textContent.startsWith("This month"));
+  assert.ok(sec, "the section heading is drawn");
+  assert.equal(sec.textContent, "This month3");
+  const lines = els.filter((e) => e.className.startsWith("mline")).map((e) => e.textContent);
+  assert.deepEqual(lines, ["November 2026: 3 sessions", "2 finished · 1 closed", "9 of 12 steps done", "r · 2 sessions · 1 finished · 5 of 8 steps"]);
+  assert.ok(!walk(render(model, { closed: ["month"] })).some((e) => e.className.startsWith("mline")));
+  assert.ok(walk(render({ ...model, month: undefined })).length > 0, "a model without a month still draws");
+});

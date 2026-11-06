@@ -85,6 +85,9 @@ svg { display: block; }
 .step.open .detail { display: block; }
 .note { display: flex; gap: 8px; align-items: baseline; padding: 3px 22px; color: var(--ink); cursor: pointer; }
 .note:hover { background: var(--hover); }
+.mline { padding: 2px 22px; color: var(--ink); overflow-wrap: anywhere; }
+.mline.sub { color: var(--mute); }
+.mline.repo { color: var(--mute); font-size: 12px; }
 .divider { height: 1px; background: var(--line); margin: 8px 0 2px; }
 .empty { padding: 14px 22px; color: var(--mute); }
 `;
@@ -246,6 +249,19 @@ function render() {
     }
   }
   if (shown === 0) root.append(h("div", { class: "empty" }, m.groups.length === 0 ? "No live Claude Code sessions recorded. A session appears here once it calls the questlog tool (the questlog mod adds it)." : "Nothing here right now."));
+  // The same lines /questlog-stats prints (mod/hooks/stats.ts), after the live sessions
+  const mo = m.month;
+  if (mo) {
+    const open = !st.closed.has("month");
+    root.append(h("div", { class: "divider" }));
+    root.append(h("div", { class: "sec", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(st.closed, "month") } },
+      h("span", { class: "chev" }, icon("chev")), "This month", h("span", { class: "grow" }), h("span", { class: "pill" }, mo.sessions)));
+    if (open) {
+      root.append(h("div", { class: "mline" }, mo.head));
+      for (const l of mo.lines) root.append(h("div", { class: "mline sub" }, l));
+      for (const r of mo.repos) root.append(h("div", { class: "mline repo" }, r));
+    }
+  }
 }
 window.addEventListener("message", (e) => { if (e.data && e.data.type === "model") { st.model = e.data.model; pruneState(st.model); draw(); } });
 document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline")) { e.preventDefault(); e.target.click(); } });
