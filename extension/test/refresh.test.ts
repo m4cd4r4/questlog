@@ -75,6 +75,21 @@ test("a recent row rewritten at the same size and mtime is seen by the next resc
   assert.equal((await r.refresh(input())).rows.find((x) => x.id === ids[0])!.now, "bbb");
 });
 
+test("a file the watcher names is reread even at the same size and mtime", async () => {
+  const r = new Refresher(() => dir);
+  const name = `${ids[0]}.json`;
+  const path = join(dir, name);
+  const t = Math.floor(Date.now() / 1000);
+  // Old enough that the rescan's recent-row reread would not cover it
+  writeFileSync(path, JSON.stringify(row(ids[0], { now: "aaa", updatedAt: NOW - 3_600_000 })));
+  utimesSync(path, t, t);
+  await r.refresh(input());
+  writeFileSync(path, JSON.stringify(row(ids[0], { now: "bbb", updatedAt: NOW - 3_600_000 })));
+  utimesSync(path, t, t);
+  r.changed(name);
+  assert.equal((await r.refresh(input())).rows.find((x) => x.id === ids[0])!.now, "bbb");
+});
+
 test("fresh reads one session's row and close from disk before any watcher event, for the hand-close check", async () => {
   const r = new Refresher(() => dir);
   await r.refresh(input());

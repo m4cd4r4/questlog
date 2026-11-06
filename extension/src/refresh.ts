@@ -91,7 +91,8 @@ export class Refresher {
       this.dirty.clear();
     }
     const recent = (n: string) => { const r = this.entries.get(n)?.row; return r !== undefined && now - r.updatedAt < RECENT_MS; };
-    await batched(names, (n) => this.reread(n, rescan && recent(n)));
+    // A file the watcher named changed by definition: reread it. A rescan rereads what moved, and every recent row
+    await batched(names, (n) => this.reread(n, !rescan || recent(n)));
   }
 
   /** Read one file again if its size or mtime moved, or always when `force`. */
