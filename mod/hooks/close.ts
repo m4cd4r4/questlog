@@ -29,3 +29,20 @@ export const evidenceOf = (steps: readonly CloseStep[]) =>
 /** A close holds until the session reports again: it is keyed to the row's report stamp. An undone close never holds. */
 export const closeHolds = (c: Close | undefined, row: { reportedAt?: number; updatedAt: number }): c is Close =>
   !!c && !c.undone && c.rowReportedAt === (row.reportedAt ?? row.updatedAt);
+
+const isCloseStep = (v: unknown): v is CloseStep => {
+  const s = v as CloseStep;
+  return !!s && typeof s.text === "string" && (s.outcome === "finished" || s.outcome === "not needed") && typeof s.why === "string";
+};
+
+/** A close as the panel reads one (extension/src/rows.ts closeFrom): every field there, or no close at all. */
+export const closeFrom = (text: string): Close | undefined => {
+  try {
+    const c = JSON.parse(text) as Close;
+    if (!(typeof c?.by === "string" && typeof c.byPlan === "string" && typeof c.evidence === "string" && typeof c.at === "number" && typeof c.rowReportedAt === "number")) return undefined;
+    if (c.steps !== undefined && !(Array.isArray(c.steps) && c.steps.every(isCloseStep))) return undefined;
+    return c;
+  } catch {
+    return undefined;
+  }
+};

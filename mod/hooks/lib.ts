@@ -312,7 +312,7 @@ export const rowToWrite = (existing: Row | undefined, id: string, c: Questlog, e
   const wipes = isEmpty(c) && existing && (existing.plan || (existing.steps?.length ?? 0) > 0)
   const row = wipes ? { ...existing, ended } : rowOf(id, c, ended, cwd)
   // The first write stamps it; a row from before startedAt existed keeps saying nothing rather than a wrong date
-  const startedAt = existing ? existing.startedAt : c.updatedAt
+  const startedAt = existing ? existing.startedAt : c.updatedAt || undefined
   return startedAt === undefined ? row : { ...row, startedAt }
 }
 

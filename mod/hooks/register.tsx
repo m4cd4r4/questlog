@@ -150,7 +150,7 @@ async function migrateOldData($: EngineInterface) {
 async function pruneOld($: EngineInterface) {
   const dir = await rowsDir($).catch(() => '')
   if (!dir) return
-  const r = await runRetention($, `${dir}/questlog`, await $.clock.now()).catch(() => undefined)
+  const r = await runRetention($, `${dir}/questlog`, await $.clock.now(), await $.session.id()).catch(() => undefined)
   if (r?.ran) $.ui.log(`questlog retention: ${r.ledgered} ledgered, ${r.deleted} deleted, ${r.kept} kept`, { to: 'debug' })
 }
 

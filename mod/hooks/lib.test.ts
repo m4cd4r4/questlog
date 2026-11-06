@@ -191,6 +191,8 @@ test('rowToWrite: startedAt is the first write and never moves; a row from befor
   expect(rowToWrite(first, 's1', { ...EMPTY, updatedAt: 9 }, true, '/w').startedAt).toBe(5)
   const old = rowOf('s1', { ...EMPTY, plan: 'P', updatedAt: 3 })
   expect('startedAt' in rowToWrite(old, 's1', { ...EMPTY, plan: 'P', updatedAt: 9 }, false, '/w')).toBe(false)
+  // A session ended before it ever saved has updatedAt 0: no stamp, so a later plan is not dated to 1970
+  expect('startedAt' in rowToWrite(undefined, 's1', EMPTY, true, '/w')).toBe(false)
 })
 
 test('statusText and newlyDone', () => {

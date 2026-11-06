@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { DAY_MS, FINISHED_KEEP_MS, UNFINISHED_KEEP_MS, appendLedger, endingOf, idsInLedger, isExpired, ledgerLine, ledgerMonth, rowFileId, rowFrom, shouldRun } from './retention'
+import { DAY_MS, FINISHED_KEEP_MS, UNFINISHED_KEEP_MS, appendLedger, endingOf, keysInLedger, ledgerKey, isExpired, ledgerLine, ledgerMonth, rowFileId, rowFrom, shouldRun } from './retention'
 import type { Close, Row } from './lib'
 
 const ID = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -63,15 +63,15 @@ test('ledgerMonth: the month of the last update, YYYY-MM', () => {
   expect(ledgerMonth(new Date(2026, 10, 6, 12).getTime())).toBe('2026-11')
 })
 
-test('idsInLedger and appendLedger: lines already there are kept, a torn last line is skipped and closed off', () => {
+test('keysInLedger and appendLedger: lines already there are kept, a torn last line is skipped and closed off', () => {
   const a = ledgerLine(row())
   const b = ledgerLine(row({ id: 'aaaaaaaa-0000-4000-8000-000000000002' }))
   const torn = `${a}\n{"id":"aaaaaaaa-00`
-  expect([...idsInLedger(torn)]).toEqual([ID])
+  expect([...keysInLedger(torn)]).toEqual([ledgerKey(ID, 1_000)])
   const text = appendLedger(torn, [b])
   expect(text.startsWith(torn + '\n')).toBe(true)
   expect(text.endsWith('\n')).toBe(true)
-  expect([...idsInLedger(text)].sort()).toEqual([ID, 'aaaaaaaa-0000-4000-8000-000000000002'])
+  expect([...keysInLedger(text)].sort()).toEqual([ledgerKey(ID, 1_000), ledgerKey('aaaaaaaa-0000-4000-8000-000000000002', 1_000)])
   expect(appendLedger('', [a])).toBe(`${a}\n`)
   expect(appendLedger(`${a}\n`, [b])).toBe(`${a}\n${b}\n`)
 })
