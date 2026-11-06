@@ -42,7 +42,7 @@ Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on 
 | 1 | freshness | done (#23) |
 | 2 | card-retention | done |
 | 3 | stats | done |
-| - | release 1.1.0 | #31 merged; mod held at 1.0.0 by #32 until the stress tests below passed, then bumped back to 1.1.0. Extension and mod publish together |
+| - | release 1.1.0 | shipped 2026-11-06: mod 1.1.0 from main (#33), tag v1.1.0 + GitHub release, VS Code Marketplace and Open VSX all serve 1.1.0 |
 
 ## Retention stress tests (before publishing 1.1.0)
 
