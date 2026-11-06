@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Shows where each parallel Claude Code session is: repo, branch, plan, stage.",
-    "version": "1.1.0"
+    "version": "1.0.0"
   },
   "plugins": [
     {

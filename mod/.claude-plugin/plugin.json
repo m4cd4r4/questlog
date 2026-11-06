@@ -1,6 +1,6 @@
 {
   "name": "questlog",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "description": "Tab title, panel and /sessions list showing where each session is: repo, branch, plan, stage, now, done, todo",
   "author": {
     "name": "Macdara"
