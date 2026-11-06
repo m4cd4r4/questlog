@@ -42,4 +42,4 @@ Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on 
 | 1 | freshness | done (#23) |
 | 2 | card-retention | done |
 | 3 | stats | done |
-| - | release 1.1.0 | release PR open |
+| - | release 1.1.0 | #31 merged. Mod version held at 1.0.0 on main (the GitHub marketplace serves main) until the retention stress tests pass; the extension is published separately |
