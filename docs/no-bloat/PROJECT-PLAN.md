@@ -42,4 +42,17 @@ Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on 
 | 1 | freshness | done (#23) |
 | 2 | card-retention | done |
 | 3 | stats | done |
-| - | release 1.1.0 | #31 merged. Mod version held at 1.0.0 on main (the GitHub marketplace serves main) until the retention stress tests pass; the extension is published separately |
+| - | release 1.1.0 | #31 merged. Mod version held at 1.0.0 on main (the GitHub marketplace serves main) until the retention stress tests pass; extension and mod then publish together |
+
+## Retention stress tests (before publishing 1.1.0)
+
+Each run on the real engine (Claude Code 2.1.316, Windows), in a `plugin-dev.mjs` sandbox with its own root (`PLUGIN_DEV_ROOT=I:/Scratch/_plugin-dev-retention`), never the live config.
+
+| # | Case | Result |
+|---|---|---|
+| 3 | `claude --resume` of a session whose row the job deleted | pass: exit 0, a fresh row with a new `startedAt`, the earlier ledger line kept |
+| 6 | Hostile files: read-only row, row locked by another process, read-only `.close`, upper-case UUID, 9 junk names, id-mismatch row, folder named like a row, rows of 1-28 MB | pass: read-only and upper-case rows ledgered then deleted; locked row ledgered, kept, deleted next run with no second line; junk untouched. Rows over the engine's read cap (between 2 and 5 MB) are kept and never ledgered: TODO 16 |
+| 4 | A live session rewriting its expired row every 2 ms (31,091 writes) while the job ran over 1,500 other rows | pass: the row was never missing under the writer; deleted on a later run once it stopped changing, one ledger line |
+| 4b | Same 1,500 rows from a `claude -p` session | the process exits before the job finishes deleting (767 of 1,500 left), all ledgered first; the next day's run deletes the rest with no duplicate lines. TODO 17 |
+| 5 | POSIX `rm` in WSL Ubuntu | not run: WSL has only the Windows build through interop; installing a native Linux build was refused by the auto-mode classifier |
+| 1, 2 | Panel under a 540-row delete; 5 sessions starting within 1 s | pending: heavy, waits for an idle machine |
