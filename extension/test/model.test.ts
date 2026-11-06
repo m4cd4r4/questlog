@@ -179,3 +179,22 @@ test("buildModel shows a closed card whose session is waiting as needs-you, stil
   assert.equal(c.closedBy?.tag, "bbbbbb");
   assert.doesNotMatch(c.age, /^closed/);
 });
+
+test("buildModel: This month counts the ledger and the rows on disk, each session once by its newest; a closed row counts closed", () => {
+  const now = new Date(2026, 10, 6, 12).getTime();
+  const close = { by: "c", byPlan: "Other", evidence: "merged", at: now, rowReportedAt: now - 1000 };
+  const m = buildModel({
+    rows: [row({ id: "a", total: 3, done: 3, updatedAt: now - 1000 }), row({ id: "b", total: 5, done: 2, updatedAt: now - 1000, closed: close })],
+    plans: [], note: [], now,
+    ledger: [
+      { id: "a", plan: "Plan", done: 1, total: 3, repo: "r", firstAt: null, lastAt: now - 86_400_000, ended: "unfinished" },
+      { id: "c", plan: "Plan", done: 4, total: 4, repo: "blog", firstAt: 5, lastAt: now - 86_400_000, ended: "finished" },
+    ],
+  });
+  assert.deepEqual(m.month, {
+    sessions: 3,
+    head: "November 2026: 3 sessions",
+    lines: ["2 finished · 1 closed", "9 of 12 steps done"],
+    repos: ["r · 2 sessions · 1 finished · 5 of 8 steps", "blog · 1 session · 1 finished · 4 of 4 steps"],
+  });
+});

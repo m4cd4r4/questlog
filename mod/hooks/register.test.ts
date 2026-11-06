@@ -274,3 +274,31 @@ test('no old folder: nothing is copied and no marker is written', async ($, on) 
   await clock.settle()
   expect(Object.keys(w.files).filter(p => p.includes('migrated'))).toEqual([])
 })
+
+test('/questlog-stats: the month\'s ledger and the rows still on disk, each session once by its newest entry; the .prev copy and a torn line are not read', async ($, on) => {
+  const NOV = new Date(2026, 10, 6, 12).getTime()
+  const A = 'aaaaaaaa-0000-4000-8000-000000000001', B = 'bbbbbbbb-0000-4000-8000-000000000002', C = 'cccccccc-0000-4000-8000-000000000003'
+  const rowOf = (id: string, over: Record<string, unknown>) => JSON.stringify({ id, repo: 'repo', where: '', plan: 'P', done: 3, total: 3, now: '', updatedAt: NOV - 60_000, ...over })
+  const lineOf = (id: string, over: Record<string, unknown>) => JSON.stringify({ id, plan: 'P', done: 3, total: 3, repo: 'repo', firstAt: null, lastAt: NOV - 86_400_000, ended: 'finished', ...over })
+  const w = { ...fresh(), files: {
+    [`C:/cfg/questlog/${A}.json`]: rowOf(A, {}),
+    [`C:/cfg/questlog/${B}.json`]: rowOf(B, { done: 2, total: 5 }),
+    [`C:/cfg/questlog/${B}.close`]: JSON.stringify({ by: C, byPlan: 'Other', evidence: 'merged', at: NOV, rowReportedAt: NOV - 60_000 }),
+    'C:/cfg/questlog/ledger/2026-11.jsonl': [lineOf(A, { done: 1, ended: 'unfinished' }), lineOf(C, { repo: 'blog', done: 4, total: 4 }), '{"id":"torn'].join('\n'),
+    'C:/cfg/questlog/ledger/.2026-11.jsonl.prev': lineOf('dddddddd-0000-4000-8000-000000000004', {}),
+  } as Record<string, string> }
+  const clock = mock.clock(on, { now: NOV })
+  world(on, w)
+  await $.session.start(start)
+  await clock.settle()
+  const { text } = await $.command.run({ command: 'questlog-stats' })
+  expect(text).toBe([
+    'November 2026: 3 sessions',
+    '  2 finished · 1 closed',
+    '  9 of 12 steps done',
+    '',
+    'By repo',
+    '  repo · 2 sessions · 1 finished · 5 of 8 steps',
+    '  blog · 1 session · 1 finished · 4 of 4 steps',
+  ].join('\n'))
+})

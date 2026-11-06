@@ -3,6 +3,7 @@ import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWork
 import { openSlices, plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
 
 import type { LiveState } from "./live.ts";
+import { monthOf, monthSummary, statsLines, type Ending, type StatEntry } from "../../mod/hooks/stats.ts";
 
 export type CardState = "here" | "run" | "wait" | "idle" | "done" | "held" | "closed";
 
@@ -36,7 +37,10 @@ export type GroupModel = { repo: string; cards: Card[]; ended: Card[] };
 
 export type Summary = { sessions: number; here: number; running: number; waiting: number; held: number; idle: number };
 
-export type ViewModel = { summary: Summary; groups: GroupModel[]; note: string[] };
+/** "This month": the same lines /questlog-stats prints (mod/hooks/stats.ts). */
+export type MonthModel = { sessions: number; head: string; lines: string[]; repos: string[] };
+
+export type ViewModel = { summary: Summary; groups: GroupModel[]; note: string[]; month: MonthModel };
 
 const SLICE_STEP: Record<SliceState, CardStep["status"]> = { done: "done", working: "now", blocked: "blocked", due: "todo", held: "todo", ready: "todo" };
 
@@ -53,6 +57,8 @@ export type ModelInput = {
   folders?: readonly string[];
   /** From `claude agents --json`; undefined when it could not be read, and the file-based view stands alone. */
   live?: ReadonlyMap<string, LiveState>;
+  /** This month's ledger lines (refresh.ts readLedger); none when there is no ledger yet. */
+  ledger?: readonly StatEntry[];
 };
 
 const sessionCard = (r: Row, now: number, focusedId?: string, openTags: ReadonlySet<string> = new Set(), folders: readonly string[] = [], live?: ReadonlyMap<string, LiveState>): Card => {
@@ -109,7 +115,16 @@ const planCard = (p: ParentPlan): Card => {
   };
 };
 
-export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live }: ModelInput): ViewModel => {
+/** A row on disk as the ledger line it will leave (retention.ts ledgerLine); `closed` is joined only when the close holds. */
+const ending = (r: Row): Ending => (r.closed ? "closed" : r.total === 0 ? "no steps" : r.done >= r.total ? "finished" : "unfinished");
+const entryOf = (r: Row): StatEntry => ({ id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo, firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: ending(r) });
+
+export const monthModel = (rows: readonly Row[], ledger: readonly StatEntry[], now: number): MonthModel => {
+  const s = monthSummary([...ledger, ...rows.map(entryOf)], monthOf(now));
+  return { sessions: s.sessions, ...statsLines(s) };
+};
+
+export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live, ledger = [] }: ModelInput): ViewModel => {
   const visible = visibleRows(rows, now, dismissed);
   const sessionGroups = groupByRepo(visible);
   const endedGroups = groupByRepo(endedRows(rows, now, dismissed));
@@ -129,6 +144,7 @@ export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openT
     summary: { sessions: sessionCards.length, here: count("here"), running: count("run"), waiting: count("wait"), held: count("held"), idle: count("idle") + count("closed") },
     groups,
     note: [...note],
+    month: monthModel(rows, ledger, now),
   };
 };
 

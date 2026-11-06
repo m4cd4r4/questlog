@@ -101,6 +101,7 @@ Come back in the morning, hover the unfinished session and click play. It reopen
 - Each finished step shows a toast.
 - `/sessions` lists every live session.
 - `/questlog` prints the plan, stage, done, now and todo of the current session.
+- `/questlog-stats` prints this month: sessions, how they ended, steps done, by repo. The sidebar shows the same under "This month".
 - A short session ID joins the tab title when two sessions share a title.
 
 ---
@@ -147,6 +148,7 @@ Extension settings:
 |---|---|
 | `/sessions` | List every live Claude session: repo, branch, plan, stage, now |
 | `/questlog` | Print the plan, stage, done, now and todo of this session |
+| `/questlog-stats` | This month: sessions, how they ended, steps done, by repo |
 
 ### Data
 

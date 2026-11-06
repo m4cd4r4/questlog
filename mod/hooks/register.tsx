@@ -8,6 +8,8 @@ import {
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
 import { runRetention } from './retention-job'
+import { LEDGER_DIR, ledgerLine } from './retention'
+import { entriesFromLedger, monthOf, monthSummary, statsText } from './stats'
 
 const PLUGIN = 'questlog'
 const PANE = 'questlog'
@@ -147,6 +149,20 @@ async function migrateOldData($: EngineInterface) {
   await $.fs.write(`${dir}/questlog/${MIGRATED_MARKER}`, '')
 }
 
+// The month's ledger, then the rows still on disk as ledger lines: a session counts once, by its newest (stats.ts)
+async function monthStats($: EngineInterface) {
+  const dir = await rowsDir($)
+  const month = monthOf(await $.clock.now())
+  if (!dir) return statsText(monthSummary([], month))
+  // Asked first: a read that misses logs a line, and most months start with no ledger
+  const path = `${dir}/questlog/${LEDGER_DIR}/${month}.jsonl`
+  const ledger = (await $.fs.exists(path).catch(() => false)) ? String((await $.fs.read(path).catch(() => '')) ?? '') : ''
+  const closes = await readCloses($)
+  const rows = (await readRows($)).filter(r => r && typeof r.id === 'string' && typeof r.updatedAt === 'number')
+  const fromRows = rows.map(r => ledgerLine(r, closes.get(r.id))).join('\n')
+  return statsText(monthSummary([...entriesFromLedger(ledger), ...entriesFromLedger(fromRows)], month))
+}
+
 async function pruneOld($: EngineInterface) {
   const dir = await rowsDir($).catch(() => '')
   if (!dir) return
@@ -270,6 +286,7 @@ export const register: Register = (on, options) => {
     })
     await $.command.register({ name: 'sessions', description: 'List every live Claude session: repo, branch, plan, stage, now' })
     await $.command.register({ name: 'questlog', description: 'Print the plan, stage, done, now and todo of this session' })
+    await $.command.register({ name: 'questlog-stats', description: 'This month: sessions, how they ended, steps done, by repo' })
     await migrateOldData($).catch(() => undefined)
     await restoreSaved($)
     await refreshWhere($)
@@ -392,6 +409,8 @@ export const register: Register = (on, options) => {
     const closes = await readCloses($)
     return { text: sessionsReport(rows.filter(r => !isClosed(r, closes)), self, await $.clock.now()) }
   })
+
+  on('command.run', { command: 'questlog-stats' }, async $ => ({ text: await monthStats($) }))
 
   // The Pane does not draw in the VS Code panel, so the detail is printed on demand
   on('command.run', { command: 'questlog' }, async $ => {

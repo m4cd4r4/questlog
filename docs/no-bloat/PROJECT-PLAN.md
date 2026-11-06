@@ -28,7 +28,7 @@ Decided with Macdara on 2026-11-06 (grilling session). Cornerman has a matching 
 |---|---|---|---|
 | 1 | `freshness` | Reread rows updated in the last few minutes on the 5-minute rescan, so a same-size rewrite in one mtime tick is not missed | 3 |
 | 2 | `card-retention` | Ledger line, then delete per rule 4, from the plugin's SessionStart job | 1 |
-| 3 | `stats` | `/questlog:stats` command and a "This month" panel section, read from the ledger. Wording as options first | new |
+| 3 | `stats` | `/questlog-stats` command and a "This month" panel section, read from the ledger and the rows still on disk. Wording as options first | new, 7, 8 |
 
 Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on click paths).
 
@@ -38,4 +38,4 @@ Deferred: TODO 2 (tab switch runs a full refresh, about 2 ms) and 4 (sync fs on 
 |---|---|---|
 | 1 | freshness | done (#23) |
 | 2 | card-retention | done |
-| 3 | stats | ready |
+| 3 | stats | done |

@@ -8,7 +8,8 @@ import * as vscode from "vscode";
 import { decodeCache, encodeCache, parseAgents, type LiveState } from "./live";
 import { MIGRATED_KEY, migrateSettings, OLD_SECTION } from "./migrate";
 import { buildModel, parseMessage, type WebMessage } from "./model";
-import { DISMISSED_FILE, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
+import { DISMISSED_FILE, LedgerReader, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
+import type { StatEntry } from "../../mod/hooks/stats.ts";
 import { pageHtml } from "./webview";
 import {
   COPY_RESUME_COMMAND, DEFAULT_RESUME, isOfferedByPlans, OPEN_WORKTREE_COMMAND, openSlices, planOnlyRepos, plansForRepo, planSummary, resumeFromArg,
@@ -182,6 +183,7 @@ class QuestlogView implements vscode.WebviewViewProvider {
   rows: Row[] = [];
   note: string[] = [];
   plans: ParentPlan[] = [];
+  ledger: readonly StatEntry[] = [];
   dismissed: Dismissed = {};
   /** The 6 character tags of the Claude tabs open in this window, and the folders it has open. */
   openTags: ReadonlySet<string> = new Set();
@@ -213,7 +215,7 @@ class QuestlogView implements vscode.WebviewViewProvider {
   onVisible: (() => void) | undefined;
 
   fire() {
-    const model = buildModel({ rows: this.rows, plans: this.plans, note: this.note, now: Date.now(), focusedId: this.focusedId, dismissed: this.dismissed, openTags: this.openTags, folders: this.folders, live: this.live });
+    const model = buildModel({ rows: this.rows, plans: this.plans, note: this.note, now: Date.now(), focusedId: this.focusedId, dismissed: this.dismissed, openTags: this.openTags, folders: this.folders, live: this.live, ledger: this.ledger });
     void this.view?.webview.postMessage({ type: "model", model });
   }
 }
@@ -482,13 +484,28 @@ export function activate(context: vscode.ExtensionContext) {
     }
   };
   startWatch();
-  tree.onVisible = update;
+  // This month's ledger changes at most once a day (the mod's retention job): read on its own slow beat, never inside a refresh
+  const ledgerReader = new LedgerReader(rowsDir);
+  const readLedger = async () => {
+    const next = await ledgerReader.read(Date.now());
+    if (next === tree.ledger || (next.length === 0 && tree.ledger.length === 0)) return;
+    tree.ledger = next;
+    draw();
+  };
+  void readLedger();
+  tree.onVisible = () => {
+    update();
+    void readLedger();
+  };
   let ticks = 0;
   const tick = setInterval(() => {
     startWatch();
     // fs.watch can drop events (a burst overflows its buffer, a network or WSL folder): a rescan now and then heals what it missed.
     // Files whose size and mtime have not moved are not read again, so this costs a readdir and a stat per file, async
-    if (++ticks % RESCAN_TICKS === 0) refresher.changed();
+    if (++ticks % RESCAN_TICKS === 0) {
+      refresher.changed();
+      void readLedger();
+    }
     update();
   }, TICK_MS);
   // Cheap when the shared answer is still fresh; the interval setting decides how often it really asks
