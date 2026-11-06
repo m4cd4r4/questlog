@@ -184,6 +184,15 @@ test('rowToWrite: an empty questlog never wipes a saved plan, it only marks the 
   expect(rowToWrite(undefined, 's1', EMPTY, false, '/w').plan).toBe('')
 })
 
+test('rowToWrite: startedAt is the first write and never moves; a row from before it stays without one', () => {
+  const first = rowToWrite(undefined, 's1', { ...EMPTY, plan: 'P', updatedAt: 5 }, false, '/w')
+  expect(first.startedAt).toBe(5)
+  expect(rowToWrite(first, 's1', { ...EMPTY, plan: 'P', updatedAt: 9 }, false, '/w').startedAt).toBe(5)
+  expect(rowToWrite(first, 's1', { ...EMPTY, updatedAt: 9 }, true, '/w').startedAt).toBe(5)
+  const old = rowOf('s1', { ...EMPTY, plan: 'P', updatedAt: 3 })
+  expect('startedAt' in rowToWrite(old, 's1', { ...EMPTY, plan: 'P', updatedAt: 9 }, false, '/w')).toBe(false)
+})
+
 test('statusText and newlyDone', () => {
   expect(statusText({ ...EMPTY, steps })).toBe('2/4 · Now: Pane render')
   expect(statusText(EMPTY)).toBe(undefined)

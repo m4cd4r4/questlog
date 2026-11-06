@@ -7,6 +7,7 @@ import {
   movesWork, sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
+import { runRetention } from './retention-job'
 
 const PLUGIN = 'questlog'
 const PANE = 'questlog'
@@ -146,6 +147,13 @@ async function migrateOldData($: EngineInterface) {
   await $.fs.write(`${dir}/questlog/${MIGRATED_MARKER}`, '')
 }
 
+async function pruneOld($: EngineInterface) {
+  const dir = await rowsDir($).catch(() => '')
+  if (!dir) return
+  const r = await runRetention($, `${dir}/questlog`, await $.clock.now()).catch(() => undefined)
+  if (r?.ran) $.ui.log(`questlog retention: ${r.ledgered} ledgered, ${r.deleted} deleted, ${r.kept} kept`, { to: 'debug' })
+}
+
 // A reopened session starts with an empty atom; its saved row still holds the plan
 async function restoreSaved($: EngineInterface) {
   const saved = await readRow($)
@@ -268,6 +276,8 @@ export const register: Register = (on, options) => {
     paneTick?.cancel()
     paneTick = $.clock.every(PANE_POLL_MS, () => syncPane($).catch(() => undefined))
     await syncPane($).catch(() => undefined)
+    // Unawaited: the session starts while old rows are ledgered and pruned (retention-job.ts)
+    void pruneOld($)
     return next(e)
   })
 

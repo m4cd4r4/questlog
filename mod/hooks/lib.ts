@@ -193,6 +193,8 @@ export type Row = {
   total: number
   now: string
   updatedAt: number
+  // When the row was first written, for the retention ledger; rows written before it lack it
+  startedAt?: number
   // What a close is held against; rows written before it lack it
   reportedAt?: number
   ended?: boolean
@@ -308,7 +310,10 @@ export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
 // The row to put on disk: an empty questlog must not replace a row that holds a plan
 export const rowToWrite = (existing: Row | undefined, id: string, c: Questlog, ended: boolean, cwd: string): Row => {
   const wipes = isEmpty(c) && existing && (existing.plan || (existing.steps?.length ?? 0) > 0)
-  return wipes ? { ...existing, ended } : rowOf(id, c, ended, cwd)
+  const row = wipes ? { ...existing, ended } : rowOf(id, c, ended, cwd)
+  // The first write stamps it; a row from before startedAt existed keeps saying nothing rather than a wrong date
+  const startedAt = existing ? existing.startedAt : c.updatedAt
+  return startedAt === undefined ? row : { ...row, startedAt }
 }
 
 export const sessionsReport = (rows: readonly Row[], selfId: string, nowMs: number) => {
