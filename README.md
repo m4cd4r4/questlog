@@ -110,7 +110,7 @@ Come back in the morning, hover the unfinished session and click play. It reopen
 
 | Where | What you get |
 |---|---|
-| Claude Code in a terminal | The mod alone: tab title, status line, toasts, `/sessions`, `/questlog` |
+| Claude Code in a terminal | The mod alone: tab title, status line, toasts, `/sessions`, `/questlog`, `/questlog-stats` |
 | VS Code | The extension adds the sidebar, status bar item and reopen |
 | Cursor, VSCodium | The extension is on Open VSX. Untested |
 | claude.ai/code on the web, desktop app, JetBrains | Untested |
@@ -122,7 +122,7 @@ The mod works without the extension. The extension shows nothing without the mod
 
 ## Technical
 
-Questlog is two parts. The **mod** (a Claude Code plugin, in `mod/`) gives Claude a `questlog` tool, sets the tab title, shows a status line, toasts each finished step, and adds `/sessions` and `/questlog`. The **VS Code extension** (in `extension/`) adds the sidebar and the status bar item.
+Questlog is two parts. The **mod** (a Claude Code plugin, in `mod/`) gives Claude a `questlog` tool, sets the tab title, shows a status line, toasts each finished step, adds `/sessions`, `/questlog` and `/questlog-stats`, and deletes old rows. The **VS Code extension** (in `extension/`) adds the sidebar and the status bar item.
 
 ### Settings
 
@@ -162,11 +162,13 @@ One JSON file per session in `~/.claude/questlog/` (or `$CLAUDE_CONFIG_DIR/quest
 
 A close lives in `<session id>.close` beside the row.
 
+Old rows are deleted. Once a day, at the start of a session, the mod deletes each row and its `.close` when the session last updated 7 days ago (finished, closed, or no plan steps) or 30 days ago (steps left). First it writes one line about the row to `ledger/YYYY-MM.jsonl` in the same folder: plan, steps done of total, repo, first and last update, and how it ended. `/questlog-stats` reads the ledger. Nothing else in the folder is deleted.
+
 Hidden sessions live in `dismissed.json` in the same folder. Sessions continued with /clear, finished sessions in closed tabs, and sessions that never got a message or a plan are hidden.
 
 ### What it reads and sends
 
-Reads and writes `~/.claude/questlog/`. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. Neither part makes a network request itself.
+Reads and writes `~/.claude/questlog/`, and deletes rows in it past the times above. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. Neither part makes a network request itself.
 
 ### Moving from Session Compass
 
