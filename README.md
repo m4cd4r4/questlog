@@ -1,6 +1,12 @@
 <a href="https://macdaraomurchu.com/products/questlog/"><img src="docs/img/hero-card.png" alt="The Questlog page: a cartoon cat dozing at its desk beside an unfinished session, Add checkout flow at 3 of 5." width="640"></a>
 
-Questlog shows the repo, branch, plan and step of every Claude Code session you have open.
+<a href="https://marketplace.visualstudio.com/items?itemName=macdara.questlog"><img alt="VS Code extension" src="https://img.shields.io/badge/VS%20Code-extension-262626?style=flat-square&labelColor=0a0a0a"></a> <a href="#install"><img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-262626?style=flat-square&labelColor=0a0a0a"></a> <a href="https://open-vsx.org/extension/macdara/questlog"><img alt="Open VSX" src="https://img.shields.io/badge/Open%20VSX-Cursor%2C%20VSCodium-262626?style=flat-square&labelColor=0a0a0a"></a> <a href="extension/LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-262626?style=flat-square&labelColor=0a0a0a"></a>
+
+[Product page](https://macdaraomurchu.com/products/questlog/) · [Install](#install) · [Features](#features) · [Changelog](CHANGELOG.md)
+
+I kept losing track of what I was working on. With several Claude Code sessions open, I couldn't remember which one was doing what.
+
+Questlog shows what each session is working on: its plan, the step it's on, and whether it's waiting for you.
 
 ## Install
 
@@ -18,6 +24,10 @@ code --install-extension macdara.questlog
 ```
 
 It is also on [Open VSX](https://open-vsx.org/extension/macdara/questlog) for VSCodium and Cursor.
+
+## What you'll see first
+
+Start a new Claude Code session and give it a task with 3 or more steps, such as "Add a checkout flow with tests and a README note". A card shows up in the Questlog sidebar with the plan and ticks off each step. A quick question won't make a card.
 
 ---
 
@@ -58,6 +68,10 @@ If a session is stuck on a permission prompt, it gets a red dot and the reason. 
 Come back in the morning, hover the unfinished session and click play. It reopens in a Claude tab.
 
 <img src="docs/img/pickup.webp" alt="An unfinished session, Add checkout flow at 2 of 5. Below, the same row on hover shows its buttons, and the pointer on the play button shows the tooltip Reopen session." width="700">
+
+## Why not Claude Code's own session list?
+
+Claude Code can already list your running sessions and tell you if one is waiting (`claude agents`). Questlog adds what each one is doing: its plan, the step it's on, and how far it has got. A session you leave unfinished stays in the sidebar for up to 7 days, with a play button to open it again.
 
 ---
 
