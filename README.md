@@ -105,6 +105,7 @@ Claude Code can already list your running sessions and tell you if one is waitin
 - If the session's folder isn't open in this window, it copies the resume command instead.
 - A session active in the last 15 minutes asks first, in case it is running in another window.
 - Unfinished sessions stay for 7 days. A reopened session gets its plan back.
+- After `/clear` the new session keeps the plan it was working on: same plan name, same steps, the done ones still ticked. A finished plan is not carried, and a different task gets its own name.
 - Parent plans: with a worktree registry, the sidebar shows each plan above the sessions of its repo.
 - Restart note: a freshly started session is told the contents of `restart-note.md`, and the sidebar shows it at the top.
 
@@ -115,8 +116,9 @@ Claude Code can already list your running sessions and tell you if one is waitin
 - Each finished step shows a toast.
 - `/sessions` lists every live session.
 - `/questlog` prints the plan, stage, done, now and todo of the current session.
-- `/questlog-stats` prints this month: sessions, how they ended, steps done, by repo. The sidebar shows the same under "This month", and each repo opens to the plans it finished, with their steps and notes.
-- A step can carry a link, such as its pull request. The step shows an Open link button.
+- `/questlog-stats` prints this month: sessions, how they ended, steps done, by repo. The sidebar shows the same under "This month". Click a repo to see its plans, newest first, finished or not, and click a plan to see its steps and notes.
+- A session with no steps is not counted, and a plan continued by `/clear` is counted once.
+- A step can carry a link, such as its pull request. The step shows an Open link button, on the card and under "This month".
 - A short session ID joins the tab title when two sessions share a title.
 
 ---
