@@ -320,3 +320,11 @@ test('accountSteps: a close must say of every open step that it is finished or n
 test('filesToMigrate: rows, dismissed list and note, not what the new folder has or the cache', () => {
   expect(filesToMigrate(['a.json', 'dismissed.json', 'restart-note.md', 'live.cache', 'panes'], ['a.json'])).toEqual(['dismissed.json', 'restart-note.md'])
 })
+
+test('stepsFromInput: a link is kept only when it is one http or https address', () => {
+  const out = stepsFromInput([
+    { text: 'a', status: 'done', link: ' https://example.test/pr/7 ' }, { text: 'b', status: 'done', link: 'javascript:alert(1)' },
+    { text: 'c', status: 'done', link: 'https://example.test/a b' }, { text: 'd', status: 'done', link: 7 },
+  ])
+  expect(out.map(s => s.link)).toEqual(['https://example.test/pr/7', undefined, undefined, undefined])
+})

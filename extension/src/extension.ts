@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { decodeCache, encodeCache, parseAgents, type LiveState } from "./live";
 import { MIGRATED_KEY, migrateSettings, OLD_SECTION } from "./migrate";
-import { buildModel, parseMessage, type WebMessage } from "./model";
+import { buildModel, monthPlanSteps, parseMessage, type WebMessage } from "./model";
 import { DISMISSED_FILE, LedgerReader, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
 import type { StatEntry } from "../../mod/hooks/stats.ts";
 import { pageHtml } from "./webview";
@@ -288,6 +288,14 @@ export function activate(context: vscode.ExtensionContext) {
         break;
       case "openNote":
         void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(notePath()));
+        break;
+      case "monthSteps":
+        // One plan's steps, asked for when it is opened under "This month": they are too many to send with every model
+        void tree.view?.webview.postMessage({ type: "monthSteps", id: m.id, steps: monthPlanSteps(tree.rows, tree.ledger ?? [], m.id) });
+        break;
+      case "openLink":
+        // A step's link, written by a session: parseMessage let through only an http or https address
+        void vscode.env.openExternal(vscode.Uri.parse(m.url, true));
         break;
     }
   });

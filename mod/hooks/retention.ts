@@ -43,11 +43,19 @@ export const endingOf = (r: Row, close?: Close): Ending =>
 export const isExpired = (r: Row, close: Close | undefined, nowMs: number) =>
   nowMs - r.updatedAt >= (endingOf(r, close) === 'unfinished' ? UNFINISHED_KEEP_MS : FINISHED_KEEP_MS)
 
-/** Rule 2: one line per deleted row. `firstAt` is null for rows written before startedAt existed. */
-export const ledgerLine = (r: Row, close?: Close) => JSON.stringify({
-  id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo,
-  firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: endingOf(r, close),
-})
+/**
+ * Rule 2: one line per deleted row. `firstAt` is null for rows written before startedAt existed.
+ * The steps go with it (text, status, note and link; a check is a local path and is left behind), so what was
+ * finished can still be read once the row is gone.
+ */
+export const ledgerLine = (r: Row, close?: Close) => {
+  const steps = (r.steps ?? []).map(s => ({ text: s.text, status: s.status, ...(s.detail ? { detail: s.detail } : {}), ...(s.link ? { link: s.link } : {}) }))
+  return JSON.stringify({
+    id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo,
+    firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: endingOf(r, close),
+    ...(steps.length > 0 ? { steps } : {}),
+  })
+}
 
 /** The ledger file a row goes to: the month of its last update, local time. */
 export const ledgerMonth = (ms: number) => {

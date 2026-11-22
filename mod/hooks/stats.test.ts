@@ -29,10 +29,14 @@ test('monthSummary: each session once, by its newest entry; only sessions whose 
     entry({ id: 'f', lastAt: OCT }), entry({ id: 'f', repo: 'blog', lastAt: NOV + 1000 }),
   ], '2026-11')
   expect(s).toEqual({
-    month: '2026-11', sessions: 5, finished: 2, closed: 1, unfinished: 1, noSteps: 1, done: 9, total: 15,
+    // 'd' has no steps, so it is in no count
+    month: '2026-11', sessions: 4, finished: 2, closed: 1, unfinished: 1, done: 9, total: 15,
     repos: [
-      { repo: 'shop', sessions: 3, finished: 1, done: 4, total: 7 },
-      { repo: 'blog', sessions: 2, finished: 1, done: 5, total: 8 },
+      { repo: 'blog', sessions: 2, finished: 1, done: 5, total: 8, plans: [
+        { id: 'f', plan: 'Ship it', done: 3, total: 3, ended: 'finished', lastAt: NOV + 1000, steps: [] },
+        { id: 'b', plan: 'Ship it', done: 2, total: 5, ended: 'closed', lastAt: NOV, steps: [] },
+      ] },
+      { repo: 'shop', sessions: 2, finished: 1, done: 4, total: 7, plans: [{ id: 'a', plan: 'Ship it', done: 3, total: 3, ended: 'finished', lastAt: NOV, steps: [] }] },
     ],
   })
 })
@@ -53,7 +57,26 @@ test('statsText: outcome first, every count with its N, endings with none left o
   expect(statsText(monthSummary([], '2026-01'))).toBe('January 2026: 0 sessions')
 })
 
-test('monthSummary: a session with no plan and no steps (a window opened and left, as the panel hides it) is not counted', () => {
+test('monthSummary: a session with no steps is not counted, with a plan name or without one', () => {
   const s = monthSummary([entry({ id: 'a', plan: '', done: 0, total: 0, ended: 'no steps' }), entry({ id: 'b', plan: 'Asked a question', done: 0, total: 0, ended: 'no steps' })], '2026-11')
-  expect([s.sessions, s.noSteps]).toEqual([1, 1])
+  expect([s.sessions, s.repos.length]).toEqual([0, 0])
+})
+
+test('entriesFromLedger: steps are read when the line has them; a wrong-shaped step is dropped, the line is kept', () => {
+  const text = line({ steps: [{ text: 'Open PR', status: 'done', detail: 'Merged.', link: 'https://example.test/pr/7' }, { text: 5 }, { text: 'Tidy', status: 'odd' }] })
+  expect(entriesFromLedger(text)[0]!.steps).toEqual([{ text: 'Open PR', status: 'done', detail: 'Merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo' }])
+})
+
+test('monthSummary: a session with no steps is not counted anywhere; each repo lists its finished and closed plans, newest first', () => {
+  const s = monthSummary([
+    entry({ id: 'a', plan: 'Old', lastAt: NOV - 5000 }),
+    entry({ id: 'b', plan: 'New', lastAt: NOV, ended: 'closed', done: 1, steps: [{ text: 'One', status: 'done' }] }),
+    entry({ id: 'c', plan: 'Half', done: 1, ended: 'unfinished' }),
+    entry({ id: 'd', repo: 'System32', plan: 'Looked around', done: 0, total: 0, ended: 'no steps' }),
+  ], '2026-11')
+  expect(s.sessions).toBe(3)
+  expect(s.repos.map(r => r.repo)).toEqual(['shop'])
+  expect(s.repos[0]!.plans.map(p => [p.plan, p.ended])).toEqual([['New', 'closed'], ['Old', 'finished']])
+  expect(s.repos[0]!.plans[0]!.steps).toEqual([{ text: 'One', status: 'done' }])
+  expect(statsText(s)).not.toContain('no steps')
 })

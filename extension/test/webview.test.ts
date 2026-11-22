@@ -24,7 +24,7 @@ function draw(model: unknown, state: unknown = {}) {
   return walk(render(model, state)).filter((e) => e.className === "empty").map((e) => e.textContent);
 }
 
-function render(model: unknown, state: unknown = {}, sets: unknown[] = []) {
+function render(model: unknown, state: unknown = {}, sets: unknown[] = [], posted: unknown[] = []) {
   const root = new El("div");
   const script = pageHtml("n", "csp").match(/<script nonce="n">([\s\S]*)<\/script>/)![1];
   const listeners: Record<string, (e: unknown) => void> = {};
@@ -33,8 +33,10 @@ function render(model: unknown, state: unknown = {}, sets: unknown[] = []) {
     createTextNode: (s: string) => s, getElementById: () => root, activeElement: null, addEventListener() {},
   };
   const window = { addEventListener: (n: string, f: (e: unknown) => void) => { listeners[n] = f; } };
-  vm.runInNewContext(script, { document, window, acquireVsCodeApi: () => ({ getState: () => state, setState: (v: unknown) => { sets.push(v); }, postMessage() {} }) });
+  vm.runInNewContext(script, { document, window, acquireVsCodeApi: () => ({ getState: () => state, setState: (v: unknown) => { sets.push(v); }, postMessage: (m: unknown) => { posted.push(m); } }) });
   listeners.message({ data: { type: "model", model } });
+  // A later message from the host, such as the steps a plan asked for
+  (root as El & { send?: (data: unknown) => void }).send = (data: unknown) => listeners.message({ data });
   return root;
 }
 
@@ -108,7 +110,7 @@ test("persisted open keys for cards, steps and ended lines of repos no longer sh
 });
 
 test("This month: a section after the sessions with its count, the outcome lines and one line per repo; closed by hand it keeps only its heading", () => {
-  const month = { sessions: 3, head: "November 2026: 3 sessions", lines: ["2 finished · 1 closed", "9 of 12 steps done"], repos: ["r · 2 sessions · 1 finished · 5 of 8 steps"] };
+  const month = { sessions: 3, head: "November 2026: 3 sessions", lines: ["2 finished · 1 closed", "9 of 12 steps done"], repos: [{ repo: "r", line: "r · 2 sessions · 1 finished · 5 of 8 steps", plans: [] }] };
   const model = { summary, groups: [{ repo: "shop", cards: [card("a")], ended: [] }], note: [], month };
   const els = walk(render(model));
   const sec = els.find((e) => e.className === "sec" && e.textContent.startsWith("This month"));
@@ -118,4 +120,30 @@ test("This month: a section after the sessions with its count, the outcome lines
   assert.deepEqual(lines, ["November 2026: 3 sessions", "2 finished · 1 closed", "9 of 12 steps done", "r · 2 sessions · 1 finished · 5 of 8 steps"]);
   assert.ok(!walk(render(model, { closed: ["month"] })).some((e) => e.className.startsWith("mline")));
   assert.ok(walk(render({ ...model, month: undefined })).length > 0, "a model without a month still draws");
+});
+
+test("This month: a repo opens to its finished plans, a plan to its steps with note and link; the link asks the host to open it; repos past five wait behind one line", () => {
+  const steps = [{ status: "done", text: "Open PR", detail: "Squash-merged.", link: "https://example.test/pr/7" }, { status: "done", text: "Tidy" }];
+  const plan = { id: "p1", title: "Ship checkout", meta: "2 of 2 · 21 Nov", hasSteps: true };
+  const repos = ["a", "b", "c", "d", "e", "f", "g"].map((repo, i) => ({ repo, line: repo + " · 1 session", plans: i === 0 ? [plan] : [] }));
+  const model = { summary, groups: [], note: [], month: { sessions: 7, head: "November 2026: 7 sessions", lines: [], repos } };
+  const texts = (root: ReturnType<typeof render>, cls: string) => walk(root).filter((e) => e.className.split(" ").includes(cls)).map((e) => e.textContent);
+  const shut = render(model);
+  assert.deepEqual(texts(shut, "repo"), ["a · 1 session", "b · 1 session", "c · 1 session", "d · 1 session", "e · 1 session"]);
+  assert.deepEqual(texts(shut, "more"), ["2 more repos"]);
+  assert.deepEqual(texts(shut, "plan"), [], "plans wait until their repo is opened");
+  assert.equal(texts(render(model, { open: ["m:more"] }), "repo").length, 7);
+  const posted: { type?: string; url?: string; id?: string }[] = [];
+  assert.equal(render(model, {}, [], posted) && posted.some((p) => p.type === "monthSteps"), false, "a shut plan asks for nothing");
+  const open = render(model, { open: ["mr:a", "mp:a:p1"] }, [], posted) as ReturnType<typeof render> & { send: (data: unknown) => void };
+  assert.deepEqual(texts(open, "plan"), ["Ship checkout2 of 2 · 21 Nov"]);
+  // The steps are asked for once when the plan is open, and drawn when they arrive
+  assert.deepEqual(texts(open, "mstep"), []);
+  open.send({ type: "model", model });
+  assert.equal(JSON.stringify(posted.filter((p) => p.type === "monthSteps")), JSON.stringify([{ type: "monthSteps", id: "p1" }]));
+  open.send({ type: "monthSteps", id: "p1", steps });
+  assert.deepEqual(texts(open, "mstep"), ["Open PROpen linkSquash-merged.", "Tidy"]);
+  walk(open).find((e) => e.textContent === "Open link")!.listeners.click({ stopPropagation() {} });
+  // The message comes from the page's own context, so it is compared as text
+  assert.equal(JSON.stringify(posted.filter((p) => p.type === "openLink")), JSON.stringify([{ type: "openLink", url: "https://example.test/pr/7" }]));
 });

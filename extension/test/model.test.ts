@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildModel, parseMessage } from "../src/model.ts";
+import { buildModel, monthPlanSteps, parseMessage } from "../src/model.ts";
 import { GONE_MS, STALE_MS, type Row } from "../src/rows.ts";
 import type { ParentPlan } from "../src/plans.ts";
 
@@ -115,6 +115,11 @@ test("parseMessage accepts known shapes and drops the rest", () => {
   assert.deepEqual(parseMessage({ type: "openWorktree", path: "C:/w" }), { type: "openWorktree", path: "C:/w" });
   assert.deepEqual(parseMessage({ type: "dismiss", id: "a" }), { type: "dismiss", id: "a" });
   assert.deepEqual(parseMessage({ type: "close", id: "a" }), { type: "close", id: "a" });
+  assert.deepEqual(parseMessage({ type: "openLink", url: "https://example.test/pr/7" }), { type: "openLink", url: "https://example.test/pr/7" });
+  assert.equal(parseMessage({ type: "openLink", url: "file:///C:/Windows/System32/calc.exe" }), undefined);
+  assert.equal(parseMessage({ type: "openLink", url: "javascript:alert(1)" }), undefined);
+  assert.deepEqual(parseMessage({ type: "monthSteps", id: "a" }), { type: "monthSteps", id: "a" });
+  assert.equal(parseMessage({ type: "monthSteps", id: 7 }), undefined);
   assert.equal(parseMessage({ type: "dismiss" }), undefined);
   assert.equal(parseMessage({ type: "close" }), undefined);
   assert.equal(parseMessage({ type: "openWorktree" }), undefined);
@@ -191,10 +196,36 @@ test("buildModel: This month counts the ledger and the rows on disk, each sessio
       { id: "c", plan: "Plan", done: 4, total: 4, repo: "blog", firstAt: 5, lastAt: now - 86_400_000, ended: "finished" },
     ],
   });
-  assert.deepEqual(m.month, {
+  assert.deepEqual({ ...m.month, repos: m.month.repos.map((r) => r.line) }, {
     sessions: 3,
     head: "November 2026: 3 sessions",
     lines: ["2 finished · 1 closed", "9 of 12 steps done"],
     repos: ["r · 2 sessions · 1 finished · 5 of 8 steps", "blog · 1 session · 1 finished · 4 of 4 steps"],
   });
+});
+
+test("buildModel: This month lists each repo's finished and closed plans, newest first, with their steps, notes and links; a session with no steps is left out", () => {
+  const now = new Date(2026, 10, 21, 12).getTime();
+  const steps = [{ text: "Open PR", status: "done" as const, detail: "Squash-merged.", link: "https://example.test/pr/7" }, { text: "Tidy", status: "done" as const }];
+  const rows = [
+    row({ id: "a", plan: "Ship checkout", total: 2, done: 2, updatedAt: now - 1000, steps }),
+    row({ id: "b", plan: "Half done", total: 3, done: 1, updatedAt: now - 1000 }),
+    row({ id: "n", repo: "System32", plan: "Looked around", total: 0, done: 0, updatedAt: now - 1000, steps: [] }),
+  ];
+  const ledger = [
+    { id: "c", plan: "Older plan", done: 4, total: 4, repo: "r", firstAt: 5, lastAt: now - 3 * 86_400_000, ended: "finished" as const },
+    { id: "d", plan: "Kept steps", done: 1, total: 1, repo: "r", firstAt: 5, lastAt: now - 4 * 86_400_000, ended: "finished" as const, steps: [{ text: "Merge", status: "done" as const, link: "https://example.test/pr/3" }] },
+  ];
+  const m = buildModel({ rows, plans: [], note: [], now, ledger });
+  assert.deepEqual(m.month.repos.map((r) => r.repo), ["r"]);
+  // The steps stay behind: the page asks for one plan's steps when it is opened
+  assert.deepEqual(m.month.repos[0].plans, [
+    { id: "a", title: "Ship checkout", meta: "2 of 2 · 21 Nov", hasSteps: true },
+    { id: "c", title: "Older plan", meta: "4 of 4 · 18 Nov", hasSteps: false },
+    { id: "d", title: "Kept steps", meta: "1 of 1 · 17 Nov", hasSteps: true },
+  ]);
+  assert.deepEqual(monthPlanSteps(rows, ledger, "a"), [{ status: "done", text: "Open PR", detail: "Squash-merged.", link: "https://example.test/pr/7" }, { status: "done", text: "Tidy" }]);
+  assert.deepEqual(monthPlanSteps(rows, ledger, "d"), [{ status: "done", text: "Merge", link: "https://example.test/pr/3" }]);
+  assert.deepEqual(monthPlanSteps(rows, ledger, "c"), []);
+  assert.deepEqual(monthPlanSteps(rows, ledger, "nobody"), []);
 });

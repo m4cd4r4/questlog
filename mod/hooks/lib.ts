@@ -110,6 +110,14 @@ const checkFromInput = (v: unknown): StepCheck | undefined => {
   return keys[0] === 'exists' ? { exists: clean } : { gone: clean }
 }
 
+// A link is one http or https address with no spaces: the panel opens it in the browser, so nothing else gets through
+export const LINK = /^https?:\/\/[^\s"'<>]+$/i
+export const linkFromInput = (v: unknown): string | undefined => {
+  if (typeof v !== 'string') return undefined
+  const clean = v.trim()
+  return clean.length <= 400 && LINK.test(clean) ? clean : undefined
+}
+
 // The tool's `steps` input as clean Steps: text capped, bad status falls to todo, detail kept only when it says something
 export const stepsFromInput = (input: unknown): Step[] =>
   Array.isArray(input)
@@ -122,7 +130,8 @@ export const stepsFromInput = (input: unknown): Step[] =>
           }
           const detail = typeof s.detail === 'string' ? s.detail.trim().slice(0, 400) : ''
           const check = checkFromInput(s.check)
-          return { ...step, ...(detail ? { detail } : {}), ...(check ? { check } : {}) }
+          const link = linkFromInput(s.link)
+          return { ...step, ...(detail ? { detail } : {}), ...(check ? { check } : {}), ...(link ? { link } : {}) }
         })
     : []
 
@@ -273,7 +282,7 @@ export const isClosed = (r: Row, closes: ReadonlyMap<string, Close>) => closeHol
 // Whether a report restates the plan and steps as they already stand: the texts, statuses, details and checks, in order
 export const sameReport = (a: Pick<Questlog, 'plan' | 'steps'>, b: Pick<Questlog, 'plan' | 'steps'>) =>
   a.plan === b.plan && a.steps.length === b.steps.length &&
-  a.steps.every((s, i) => JSON.stringify([s.text, s.status, s.detail ?? '', s.check ?? null]) === JSON.stringify([b.steps[i].text, b.steps[i].status, b.steps[i].detail ?? '', b.steps[i].check ?? null]))
+  a.steps.every((s, i) => JSON.stringify([s.text, s.status, s.detail ?? '', s.check ?? null, s.link ?? '']) === JSON.stringify([b.steps[i].text, b.steps[i].status, b.steps[i].detail ?? '', b.steps[i].check ?? null, b.steps[i].link ?? '']))
 
 // Tools that only look: a turn made of these cannot have moved a step, so it owes no report.
 // Everything else (Write, Edit, Bash, agents, MCP tools that act) counts; questlog's own tools are the report

@@ -84,3 +84,9 @@ test('shouldRun: once a day; no marker, a bad one or one from the future runs', 
   expect(shouldRun(String(now - DAY_MS), now)).toBe(true)
   expect(shouldRun(String(now + DAY_MS), now)).toBe(true)
 })
+
+test('ledgerLine: a row with steps keeps each step text, status, note and link, so finished work can be read after the row is gone', () => {
+  const r = row({ steps: [{ text: 'Open PR', status: 'done', detail: 'Squash-merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo', check: { gone: 'tmp' } }] } as Partial<Row>)
+  expect(JSON.parse(ledgerLine(r)).steps).toEqual([{ text: 'Open PR', status: 'done', detail: 'Squash-merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo' }])
+  expect('steps' in JSON.parse(ledgerLine(row()))).toBe(false)
+})

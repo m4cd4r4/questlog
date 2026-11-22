@@ -3,7 +3,10 @@
 export type StepStatus = "done" | "now" | "todo";
 /** A path that proves the step done: when it exists, or when it is gone. Absolute, or relative to the session's folder. */
 export type StepCheck = { exists: string } | { gone: string };
-export type Step = { text: string; status: StepStatus; detail?: string; check?: StepCheck };
+/** `link` is one http or https address the step produced, such as its pull request (mod lib.ts linkFromInput). */
+export type Step = { text: string; status: StepStatus; detail?: string; check?: StepCheck; link?: string };
+/** What the panel will open in the browser: the mod writes only these, and a row file edited by hand gets no more. */
+export const isLink = (v: unknown): v is string => typeof v === "string" && v.length <= 400 && /^https?:\/\/[^\s"'<>]+$/i.test(v);
 
 /** One file per session in ~/.claude/questlog/, written by the mod (lib.ts rowOf). */
 export type Row = {
@@ -213,7 +216,7 @@ export const stepsOf = (r: Row): Step[] =>
   r.steps && r.steps.length > 0 ? r.steps : r.now ? [{ text: r.now, status: "now" }] : [];
 
 /** `not needed`: a close said this open step was not required, and `detail` carries its reason. */
-export type AccountedStep = { status: StepStatus | "not needed"; text: string; detail?: string; check?: StepCheck };
+export type AccountedStep = { status: StepStatus | "not needed"; text: string; detail?: string; check?: StepCheck; link?: string };
 
 /**
  * The steps as the row's close accounted for them, the one view every surface draws (card, status bar, tooltip,
@@ -223,8 +226,9 @@ export type AccountedStep = { status: StepStatus | "not needed"; text: string; d
 export const accountedSteps = (r: Row): AccountedStep[] =>
   stepsOf(r).map((s) => {
     const c = s.status !== "done" ? r.closed?.steps?.find((x) => stepKey(x.text) === stepKey(s.text)) : undefined;
-    if (!c) return { status: s.status, text: s.text, detail: s.detail, check: s.check };
-    return c.outcome === "finished" ? { status: "done", text: s.text, detail: c.why || s.detail } : { status: "not needed", text: s.text, detail: c.why };
+    const link = isLink(s.link) ? { link: s.link } : {};
+    if (!c) return { status: s.status, text: s.text, detail: s.detail, check: s.check, ...link };
+    return c.outcome === "finished" ? { status: "done", text: s.text, detail: c.why || s.detail, ...link } : { status: "not needed", text: s.text, detail: c.why, ...link };
   });
 
 /**
