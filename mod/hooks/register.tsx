@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Questlog, Step } from '../types'
 import {
-  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
+  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, carryContext, carryFrom, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
   movesWork, sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
@@ -20,7 +20,7 @@ const questlog = atom({ plugin: 'questlog', key: 'questlog' } as const, EMPTY)
 
 const GUIDE = [
   'Questlog: the person runs many sessions in parallel and orients by a panel fed by the `questlog` tool.',
-  'Your FIRST tool call on any task of 3+ steps (even one that only plans, audits or investigates) is `questlog`; call it again whenever a step starts or finishes and whenever the plan changes. A resumed session (after /clear, a handover or a restart note) counts as a new task: your first tool call is `questlog` with the handover\'s next steps. One call, no narration about it.',
+  'Your FIRST tool call on any task of 3+ steps (even one that only plans, audits or investigates) is `questlog`; call it again whenever a step starts or finishes and whenever the plan changes. A resumed session (after /clear, a handover or a restart note) reports first too: your first tool call is `questlog`. When you are told the plan it continues, keep that plan name and its steps, brought up to date from the handover; give a new plan name only for a different task. One call, no narration about it.',
   'Give `plan` as a 3-6 word name of the feature or job, and `steps` as the whole list each time, each step under 8 words.',
   'Add a `detail` (1-2 plain sentences) to a step when its label alone does not say what it covers; resend it with the whole list.',
   'Skip it for one-shot questions.',
@@ -126,14 +126,20 @@ async function linkCleared($: EngineInterface) {
   const old = clearedFrom
   clearedFrom = undefined
   const dir = await rowsDir($)
-  if (!old || !dir) return
+  if (!old || !dir) return undefined
   // The tab keeps the old session's tag until the next rename lands; the row says which session it now is
   await save($, x => ({ ...x, continuedFrom: old }))
   const path = `${dir}/questlog/${old}.json`
   try {
     const row = JSON.parse(String((await $.fs.read(path)) ?? '')) as Row
     await $.fs.write(path, JSON.stringify({ ...row, continuedIn: await $.session.id() }))
-  } catch { /* no row: nothing was on that card */ }
+    // The plan goes with the work: this session's card starts where the cleared one stopped (lib.ts carryFrom)
+    const now = await read($, questlog)
+    const carried = carryFrom(now, row)
+    if (carried === now) return undefined
+    await save($, () => ({ ...carried, continuedFrom: old }))
+    return carryContext(row) || undefined
+  } catch { return undefined /* no row: nothing was on that card */ }
 }
 
 // Once: data from before the rename moves across so sessions keep their plans. The old folder stays.
@@ -309,8 +315,12 @@ export const register: Register = (on, options) => {
   on('classic.SessionStart', async ($, e, next) => {
     const r = await next(e)
     const source = (e as { source?: string }).source
-    if (source === 'clear') await linkCleared($)
-    if (source === 'clear' || source === 'compact') return r
+    if (source === 'clear') {
+      // The continuing session is told the plan it carries, so it keeps the name and does not write a new one
+      const carried = await linkCleared($)
+      return carried ? { ...r, additionalContext: [...(r.additionalContext ?? []), carried] } : r
+    }
+    if (source === 'compact') return r
     const dir = await rowsDir($)
     if (!dir) return r
     const path = `${dir}/questlog/${NOTE_FILE}`
