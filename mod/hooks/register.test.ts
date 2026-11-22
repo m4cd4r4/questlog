@@ -302,3 +302,45 @@ test('/questlog-stats: the month\'s ledger and the rows still on disk, each sess
     '  blog · 1 session · 1 finished · 4 of 4 steps',
   ].join('\n'))
 })
+
+test('/clear: the session that follows takes on the cleared session\'s plan and steps, is told to keep the plan name, and the old row names it', async ($, on) => {
+  const OLD = 'aaaaaaaa-0000-4000-8000-000000000001'
+  const steps = [{ text: 'Add totals', status: 'done' }, { text: 'Wire form', status: 'now' }, { text: 'Open PR', status: 'todo' }]
+  const row = JSON.stringify({ id: OLD, repo: 'repo', where: 'feat', plan: 'Checkout flow', done: 1, total: 3, now: 'Wire form', updatedAt: 7, cwd: 'C:/work/repo', steps })
+  const w = { ...fresh(), files: { [`C:/cfg/questlog/${OLD}.json`]: row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  // The host's own answer to the event, beneath the plugin: it adds nothing
+  on('classic.SessionStart', async () => ({}) as never)
+  await $.session.start(start)
+  await clock.settle()
+  await $.session.end({ reason: 'clear', sessionId: OLD } as never)
+  const r = await $.classic.SessionStart({ source: 'clear' } as never) as { additionalContext?: string[] }
+  await clock.settle()
+
+  expect(JSON.parse(w.files[`C:/cfg/questlog/${OLD}.json`]).continuedIn).toBe('sess-1')
+  const next = JSON.parse(w.files['C:/cfg/questlog/sess-1.json'])
+  expect([next.plan, next.done, next.total, next.continuedFrom]).toEqual(['Checkout flow', 1, 3, OLD])
+  expect(next.steps.map((s: { status: string }) => s.status)).toEqual(['done', 'now', 'todo'])
+  const told = (r.additionalContext ?? []).join('\n')
+  expect(told).toContain('"Checkout flow"')
+  expect(told).toContain('Keep this plan name')
+})
+
+test('/clear after a finished plan carries nothing: the next session starts empty and is told nothing', async ($, on) => {
+  const OLD = 'aaaaaaaa-0000-4000-8000-000000000001'
+  const row = JSON.stringify({ id: OLD, repo: 'repo', where: 'feat', plan: 'Checkout flow', done: 1, total: 1, now: '', updatedAt: 7, cwd: 'C:/work/repo', steps: [{ text: 'Add totals', status: 'done' }] })
+  const w = { ...fresh(), files: { [`C:/cfg/questlog/${OLD}.json`]: row } as Record<string, string> }
+  const clock = mock.clock(on)
+  world(on, w)
+  // The host's own answer to the event, beneath the plugin: it adds nothing
+  on('classic.SessionStart', async () => ({}) as never)
+  await $.session.start(start)
+  await clock.settle()
+  await $.session.end({ reason: 'clear', sessionId: OLD } as never)
+  const r = await $.classic.SessionStart({ source: 'clear' } as never) as { additionalContext?: string[] }
+  await clock.settle()
+  expect(JSON.parse(w.files[`C:/cfg/questlog/${OLD}.json`]).continuedIn).toBe('sess-1')
+  expect((r.additionalContext ?? []).join('\n')).not.toContain('Checkout flow')
+  expect(w.files['C:/cfg/questlog/sess-1.json'] ? JSON.parse(w.files['C:/cfg/questlog/sess-1.json']).plan : '').toBe('')
+})
