@@ -316,6 +316,28 @@ export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
   }
 }
 
+// A plan worth carrying across /clear: it has steps and some are left. A finished one stays where it ended.
+const hasStepsLeft = (r: Row) => (r.steps?.length ?? 0) > 0 && r.done < r.total
+
+/**
+ * After /clear (a relay included) the new session takes on the plan and steps of the session it continues, as a
+ * restart already does (restoreFrom). Before this the new session was told it was a new task and wrote a new plan
+ * name: measured over one month, 285 of 320 cleared sessions were followed by a renamed plan, 272 of them on the
+ * same branch, so one piece of work read as many unfinished ones (Macdara, 2026-11-22).
+ */
+export const carryFrom = (c: Questlog, old: Row): Questlog => (hasStepsLeft(old) ? restoreFrom(c, old) : c)
+
+/** What the continuing session is told: the plan it carries and where each step stands. '' when nothing is carried. */
+export const carryContext = (old: Row) => {
+  if (!hasStepsLeft(old)) return ''
+  return [
+    `This session continues the Questlog plan "${old.plan}" from the session before /clear. Its steps are already on this session's card:`,
+    ...(old.steps ?? []).map(s => `- ${s.status}: ${s.text}`),
+    'Keep this plan name. Your first `questlog` call resends this plan with its steps brought up to date: the done ones stay done, and steps are added, reworded or dropped where the handover says so.',
+    'Give a new plan name only when the person asks for a different task.',
+  ].join('\n')
+}
+
 // The row to put on disk: an empty questlog must not replace a row that holds a plan
 export const rowToWrite = (existing: Row | undefined, id: string, c: Questlog, ended: boolean, cwd: string): Row => {
   const wipes = isEmpty(c) && existing && (existing.plan || (existing.steps?.length ?? 0) > 0)

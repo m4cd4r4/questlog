@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { EMPTY, accountSteps, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, movesWork, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sameReport, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
+import { EMPTY, accountSteps, carryContext, carryFrom, filesToMigrate, stepsFromInput, noteContext, pickCard, STALE_MS, claudeDir, claudeDirOf, headingOf, movesWork, newlyDone, paneOpenOf, restoreFrom, rowOf, rowToWrite, sameReport, sessionTitleOf, sessionsReport, tagModeOf, tagOf, tagToShow, statusText, title, topicOf, turnEndNudge, whereFromGit } from './lib'
 import type { Row } from './lib'
 
 const steps = [
@@ -327,4 +327,32 @@ test('stepsFromInput: a link is kept only when it is one http or https address',
     { text: 'c', status: 'done', link: 'https://example.test/a b' }, { text: 'd', status: 'done', link: 7 },
   ])
   expect(out.map(s => s.link)).toEqual(['https://example.test/pr/7', undefined, undefined, undefined])
+})
+
+const cleared = (over: Partial<Row> = {}): Row => ({
+  id: 'aaaaaaaa-0000-4000-8000-000000000001', repo: 'shop', where: 'feat', plan: 'Checkout flow', done: 1, total: 3, now: 'Wire form', updatedAt: 1_000,
+  steps: [{ text: 'Add totals', status: 'done' }, { text: 'Wire form', status: 'now', detail: 'Card first.' }, { text: 'Open PR', status: 'todo' }], ...over,
+} as Row)
+
+test('carryFrom: after /clear an empty session takes on the plan and steps of the session it continues, done ones still done', () => {
+  const next = carryFrom(EMPTY, cleared())
+  expect([next.plan, next.steps.map(s => s.status)]).toEqual(['Checkout flow', ['done', 'now', 'todo']])
+  expect(next.steps[1]!.detail).toBe('Card first.')
+})
+
+test('carryFrom: nothing is carried from a finished plan, a plan with no steps, or into a session that already reported', () => {
+  expect(carryFrom(EMPTY, cleared({ done: 3, steps: cleared().steps!.map(s => ({ ...s, status: 'done' as const })) }))).toBe(EMPTY)
+  expect(carryFrom(EMPTY, cleared({ total: 0, done: 0, steps: [] }))).toBe(EMPTY)
+  const busy = { ...EMPTY, plan: 'Something else', steps: [{ text: 'a', status: 'now' as const }] }
+  expect(carryFrom(busy, cleared())).toBe(busy)
+})
+
+test('carryContext: the new session is told the plan it continues and its steps, and to keep the name unless the task is a different one', () => {
+  const text = carryContext(cleared())
+  expect(text).toContain('"Checkout flow"')
+  expect(text).toContain('- done: Add totals')
+  expect(text).toContain('- now: Wire form')
+  expect(text).toContain('- todo: Open PR')
+  expect(text).toContain('Keep this plan name')
+  expect(carryContext(cleared({ total: 0, done: 0, steps: [] }))).toBe('')
 })

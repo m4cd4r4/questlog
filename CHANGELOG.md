@@ -14,6 +14,7 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 - A session continued by `/clear` is counted once under "This month" and in `/questlog-stats`, by the session that carried on. Before, every earlier session of the chain counted as unfinished.
 - A step closed as finished or not needed keeps that outcome and its reason in the ledger.
 - "This month" shows the five repos with the most sessions. The rest wait behind one line.
+- After `/clear` the new session keeps the plan it was working on. Its card starts with the same plan name and steps, the done ones still ticked, as a restart already did. Before, the new session was told it was a new task and wrote a new plan name, so one piece of work showed as several unfinished ones. A finished plan is not carried, and a different task still gets its own name.
 
 ## 1.1.0 - unreleased
 
