@@ -36,7 +36,10 @@ test('monthSummary: each session once, by its newest entry; only sessions whose 
         { id: 'f', plan: 'Ship it', done: 3, total: 3, ended: 'finished', lastAt: NOV + 1000, steps: [] },
         { id: 'b', plan: 'Ship it', done: 2, total: 5, ended: 'closed', lastAt: NOV, steps: [] },
       ] },
-      { repo: 'shop', sessions: 2, finished: 1, done: 4, total: 7, plans: [{ id: 'a', plan: 'Ship it', done: 3, total: 3, ended: 'finished', lastAt: NOV, steps: [] }] },
+      { repo: 'shop', sessions: 2, finished: 1, done: 4, total: 7, plans: [
+        { id: 'a', plan: 'Ship it', done: 3, total: 3, ended: 'finished', lastAt: NOV, steps: [] },
+        { id: 'c', plan: 'Ship it', done: 1, total: 4, ended: 'unfinished', lastAt: NOV, steps: [] },
+      ] },
     ],
   })
 })
@@ -67,7 +70,7 @@ test('entriesFromLedger: steps are read when the line has them; a wrong-shaped s
   expect(entriesFromLedger(text)[0]!.steps).toEqual([{ text: 'Open PR', status: 'done', detail: 'Merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo' }])
 })
 
-test('monthSummary: a session with no steps is not counted anywhere; each repo lists its finished and closed plans, newest first', () => {
+test('monthSummary: a session with no steps is not counted anywhere; each repo lists its plans, newest first', () => {
   const s = monthSummary([
     entry({ id: 'a', plan: 'Old', lastAt: NOV - 5000 }),
     entry({ id: 'b', plan: 'New', lastAt: NOV, ended: 'closed', done: 1, steps: [{ text: 'One', status: 'done' }] }),
@@ -76,7 +79,21 @@ test('monthSummary: a session with no steps is not counted anywhere; each repo l
   ], '2026-11')
   expect(s.sessions).toBe(3)
   expect(s.repos.map(r => r.repo)).toEqual(['shop'])
-  expect(s.repos[0]!.plans.map(p => [p.plan, p.ended])).toEqual([['New', 'closed'], ['Old', 'finished']])
+  expect(s.repos[0]!.plans.map(p => [p.plan, p.ended])).toEqual([['New', 'closed'], ['Half', 'unfinished'], ['Old', 'finished']])
   expect(s.repos[0]!.plans[0]!.steps).toEqual([{ text: 'One', status: 'done' }])
   expect(statsText(s)).not.toContain('no steps')
+})
+
+test('monthSummary: a session continued by /clear is counted once, by the session that carried it on; unfinished plans are listed too', () => {
+  const s = monthSummary([
+    entry({ id: 'a', plan: 'Relay', done: 1, total: 4, ended: 'unfinished', lastAt: NOV - 3000, continuedIn: 'b' }),
+    entry({ id: 'b', plan: 'Relay', done: 2, total: 4, ended: 'unfinished', lastAt: NOV - 2000, continuedIn: 'c' }),
+    entry({ id: 'c', plan: 'Relay', done: 4, total: 4, lastAt: NOV - 1000 }),
+    // Continued into a session that never reported steps, or one that is not known: it still counts itself
+    entry({ id: 'd', plan: 'Lost', done: 1, total: 2, ended: 'unfinished', lastAt: NOV, continuedIn: 'e' }),
+    entry({ id: 'e', plan: '', done: 0, total: 0, ended: 'no steps' }),
+    entry({ id: 'f', plan: 'Gone', done: 1, total: 2, ended: 'unfinished', lastAt: NOV - 500, continuedIn: 'nobody' }),
+  ], '2026-11')
+  expect([s.sessions, s.finished, s.unfinished, s.done, s.total]).toEqual([3, 1, 2, 6, 8])
+  expect(s.repos[0]!.plans.map(p => [p.plan, p.ended])).toEqual([['Lost', 'unfinished'], ['Gone', 'unfinished'], ['Relay', 'finished']])
 })

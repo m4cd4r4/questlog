@@ -221,6 +221,8 @@ test("buildModel: This month lists each repo's finished and closed plans, newest
   // The steps stay behind: the page asks for one plan's steps when it is opened
   assert.deepEqual(m.month.repos[0].plans, [
     { id: "a", title: "Ship checkout", meta: "2 of 2 · 21 Nov", hasSteps: true },
+    // An unfinished plan is listed too, so the steps it did can be read
+    { id: "b", title: "Half done", meta: "1 of 3 · 21 Nov", hasSteps: false },
     { id: "c", title: "Older plan", meta: "4 of 4 · 18 Nov", hasSteps: false },
     { id: "d", title: "Kept steps", meta: "1 of 1 · 17 Nov", hasSteps: true },
   ]);

@@ -131,7 +131,7 @@ const stepOf = (s: { status: StatStep["status"]; text: string; detail?: string; 
   ({ status: s.status, text: s.text, ...(s.detail ? { detail: s.detail } : {}), ...(s.link ? { link: s.link } : {}) });
 const entryOf = (r: Row): StatEntry => {
   const steps = accountedSteps(r).map(stepOf);
-  return { id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo, firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: ending(r), ...(steps.length > 0 ? { steps } : {}) };
+  return { id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo, firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: ending(r), ...(steps.length > 0 ? { steps } : {}), ...(r.continuedIn ? { continuedIn: r.continuedIn } : {}) };
 };
 
 const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

@@ -7,7 +7,7 @@ export type Ending = 'finished' | 'closed' | 'unfinished' | 'no steps'
 
 /** One ledger line, or one row still on disk in the same shape. `firstAt` is null for rows from before startedAt: unknown, not zero. */
 export type StatStep = { text: string; status: 'done' | 'now' | 'todo' | 'not needed'; detail?: string; link?: string }
-export type StatEntry = { id: string; plan: string; done: number; total: number; repo: string; firstAt: number | null; lastAt: number; ended: Ending; steps?: StatStep[] }
+export type StatEntry = { id: string; plan: string; done: number; total: number; repo: string; firstAt: number | null; lastAt: number; ended: Ending; steps?: StatStep[]; continuedIn?: string }
 
 const ENDINGS: readonly string[] = ['finished', 'closed', 'unfinished', 'no steps']
 const STATUSES: readonly string[] = ['done', 'now', 'todo', 'not needed']
@@ -41,12 +41,13 @@ export const entriesFromLedger = (text: string): StatEntry[] => {
       id: v.id, plan: typeof v.plan === 'string' ? v.plan : '', done: v.done as number, total: v.total as number,
       repo: typeof v.repo === 'string' ? v.repo : '', firstAt: num(v.firstAt) ? v.firstAt as number : null, lastAt: v.lastAt as number, ended: v.ended as Ending,
       ...(steps ? { steps } : {}),
+      ...(typeof v.continuedIn === 'string' && v.continuedIn ? { continuedIn: v.continuedIn } : {}),
     })
   }
   return out
 }
 
-/** A plan that ended finished or closed: what "This month" lists under its repo. */
+/** A plan counted this month, however it ended: what "This month" lists under its repo. An unfinished one still shows the steps it did. */
 export type PlanDone = { id: string; plan: string; done: number; total: number; ended: Ending; lastAt: number; steps: StatStep[] }
 export type RepoSummary = { repo: string; sessions: number; finished: number; done: number; total: number; plans: PlanDone[] }
 export type MonthSummary = { month: string; sessions: number; finished: number; closed: number; unfinished: number; done: number; total: number; repos: RepoSummary[] }
@@ -74,6 +75,10 @@ export const monthSummary = (entries: readonly StatEntry[], month: string): Mont
   const repos = new Map<string, RepoSummary>()
   for (const e of newest.values()) {
     if (monthOf(e.lastAt) !== month || e.total === 0) continue
+    // Continued by /clear into a session that reported steps: that one carries the plan, so this one is not counted
+    // again. Measured 2026-11-22: 224 of 432 "unfinished" sessions in one month were earlier links of such a chain.
+    const next = e.continuedIn ? newest.get(e.continuedIn) : undefined
+    if (next && next.total > 0) continue
     s.sessions++
     if (e.ended === 'finished') s.finished++
     else if (e.ended === 'closed') s.closed++
@@ -86,7 +91,7 @@ export const monthSummary = (entries: readonly StatEntry[], month: string): Mont
     if (e.ended === 'finished') r.finished++
     r.done += e.done
     r.total += e.total
-    if (e.ended === 'finished' || e.ended === 'closed') r.plans.push({ id: e.id, plan: e.plan, done: e.done, total: e.total, ended: e.ended, lastAt: e.lastAt, steps: e.steps ?? [] })
+    r.plans.push({ id: e.id, plan: e.plan, done: e.done, total: e.total, ended: e.ended, lastAt: e.lastAt, steps: e.steps ?? [] })
     repos.set(name, r)
   }
   for (const r of repos.values()) r.plans.sort((a, b) => b.lastAt - a.lastAt || a.id.localeCompare(b.id))
