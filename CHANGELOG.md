@@ -5,12 +5,14 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 ## 1.2.0 - unreleased
 
 ### Added
-- "This month" in the sidebar now lists finished work. Click a repo to see the plans it finished or closed this month, newest first, and click a plan to see its steps and their notes.
+- "This month" in the sidebar now lists the month's work. Click a repo to see its plans, newest first, finished or not, and click a plan to see its steps and their notes.
 - A step can carry a `link`, such as its pull request. The step shows an Open link button, on the session's card and under "This month". Only an http or https address is accepted.
 - The ledger line for a deleted row now keeps the row's steps, notes and links, so finished work can still be read after the row is gone. Lines written before this hold counts only.
 
 ### Changed
 - A session with no steps is no longer counted under "This month" or in `/questlog-stats`. A window opened in a system folder is not work, and its count sat beside the unfinished count.
+- A session continued by `/clear` is counted once under "This month" and in `/questlog-stats`, by the session that carried on. Before, every earlier session of the chain counted as unfinished.
+- A step closed as finished or not needed keeps that outcome and its reason in the ledger.
 - "This month" shows the five repos with the most sessions. The rest wait behind one line.
 
 ## 1.1.0 - unreleased
