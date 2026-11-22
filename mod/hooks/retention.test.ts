@@ -84,3 +84,19 @@ test('shouldRun: once a day; no marker, a bad one or one from the future runs', 
   expect(shouldRun(String(now - DAY_MS), now)).toBe(true)
   expect(shouldRun(String(now + DAY_MS), now)).toBe(true)
 })
+
+test('ledgerLine: a row with steps keeps each step text, status, note and link, so finished work can be read after the row is gone', () => {
+  const r = row({ steps: [{ text: 'Open PR', status: 'done', detail: 'Squash-merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo', check: { gone: 'tmp' } }] } as Partial<Row>)
+  expect(JSON.parse(ledgerLine(r)).steps).toEqual([{ text: 'Open PR', status: 'done', detail: 'Squash-merged.', link: 'https://example.test/pr/7' }, { text: 'Tidy', status: 'todo' }])
+  expect('steps' in JSON.parse(ledgerLine(row()))).toBe(false)
+})
+
+test('ledgerLine: a close that holds is kept on the steps (finished with its proof, not needed with its reason), and a session continued by /clear names where it went', () => {
+  const r = row({ done: 1, total: 3, continuedIn: 'cccccccc-0000-4000-8000-000000000003', steps: [{ text: 'Build', status: 'done' }, { text: 'Deploy', status: 'todo', detail: 'To prod.' }, { text: 'Tidy ', status: 'now' }] } as Partial<Row>)
+  const c: Close = { ...close(r), steps: [{ text: 'deploy', outcome: 'finished', why: 'Deployed by hand.' }, { text: 'Tidy', outcome: 'not needed', why: 'Nothing left over.' }] }
+  const line = JSON.parse(ledgerLine(r, c))
+  expect(line.steps).toEqual([{ text: 'Build', status: 'done' }, { text: 'Deploy', status: 'done', detail: 'Deployed by hand.' }, { text: 'Tidy ', status: 'not needed', detail: 'Nothing left over.' }])
+  expect(line.continuedIn).toBe('cccccccc-0000-4000-8000-000000000003')
+  // A close that no longer holds (the session reported again) changes nothing
+  expect(JSON.parse(ledgerLine({ ...r, reportedAt: 9_999 }, c)).steps[1]).toEqual({ text: 'Deploy', status: 'todo', detail: 'To prod.' })
+})

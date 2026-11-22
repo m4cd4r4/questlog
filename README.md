@@ -115,7 +115,8 @@ Claude Code can already list your running sessions and tell you if one is waitin
 - Each finished step shows a toast.
 - `/sessions` lists every live session.
 - `/questlog` prints the plan, stage, done, now and todo of the current session.
-- `/questlog-stats` prints this month: sessions, how they ended, steps done, by repo. The sidebar shows the same under "This month".
+- `/questlog-stats` prints this month: sessions, how they ended, steps done, by repo. The sidebar shows the same under "This month", and each repo opens to the plans it finished, with their steps and notes.
+- A step can carry a link, such as its pull request. The step shows an Open link button.
 - A short session ID joins the tab title when two sessions share a title.
 
 ---
@@ -176,7 +177,7 @@ One JSON file per session in `~/.claude/questlog/` (or `$CLAUDE_CONFIG_DIR/quest
 
 A close lives in `<session id>.close` beside the row.
 
-Old rows are deleted. Once a day, at the start of a session, the mod deletes each row and its `.close` when the session last updated 7 days ago (finished, closed, or no plan steps) or 30 days ago (steps left). First it writes one line about the row to `ledger/YYYY-MM.jsonl` in the same folder: plan, steps done of total, repo, first and last update, and how it ended. `/questlog-stats` reads the ledger. Nothing else in the folder is deleted.
+Old rows are deleted. Once a day, at the start of a session, the mod deletes each row and its `.close` when the session last updated 7 days ago (finished, closed, or no plan steps) or 30 days ago (steps left). First it writes one line about the row to `ledger/YYYY-MM.jsonl` in the same folder: plan, steps done of total, repo, first and last update, how it ended, and the steps with their notes and links. `/questlog-stats` reads the ledger. Nothing else in the folder is deleted.
 
 Hidden sessions live in `dismissed.json` in the same folder. Sessions continued with /clear, finished sessions in closed tabs, and sessions that never got a message or a plan are hidden.
 

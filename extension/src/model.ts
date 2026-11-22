@@ -1,14 +1,14 @@
 // Pure view model for the webview: no vscode import, so node --test runs it directly.
-import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWorkLeft, isFinished, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
+import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWorkLeft, isFinished, isLink, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
 import { openSlices, plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
 
 import type { LiveState } from "./live.ts";
-import { monthOf, monthSummary, statsLines, type Ending, type StatEntry } from "../../mod/hooks/stats.ts";
+import { monthOf, monthSummary, statsLines, type Ending, type StatEntry, type StatStep } from "../../mod/hooks/stats.ts";
 
 export type CardState = "here" | "run" | "wait" | "idle" | "done" | "held" | "closed";
 
 /** `not needed`: a close said this open step was not required, and `detail` carries its reason. */
-export type CardStep = { status: Step["status"] | "blocked" | "not needed"; text: string; detail?: string; resume?: string; worktree?: string };
+export type CardStep = { status: Step["status"] | "blocked" | "not needed"; text: string; detail?: string; resume?: string; worktree?: string; link?: string };
 
 export type Card = {
   id: string;
@@ -37,8 +37,18 @@ export type GroupModel = { repo: string; cards: Card[]; ended: Card[] };
 
 export type Summary = { sessions: number; here: number; running: number; waiting: number; held: number; idle: number };
 
-/** "This month": the same lines /questlog-stats prints (mod/hooks/stats.ts). */
-export type MonthModel = { sessions: number; head: string; lines: string[]; repos: string[] };
+export type MonthStep = { status: StatStep["status"]; text: string; detail?: string; link?: string };
+/**
+ * A plan that ended finished or closed this month. Its steps do not travel with the model: a 715-session month
+ * with them measured 760 KB on every refresh, so the page asks for one plan's steps when it is opened
+ * (monthPlanSteps). `hasSteps` is false for a ledger line from before steps were kept.
+ */
+export type MonthPlan = { id: string; title: string; meta: string; hasSteps: boolean };
+export type MonthRepo = { repo: string; line: string; plans: MonthPlan[] };
+/** "This month": the lines /questlog-stats prints (mod/hooks/stats.ts), and under each repo the plans it finished. */
+export type MonthModel = { sessions: number; head: string; lines: string[]; repos: MonthRepo[] };
+/** The most plans one repo lists: the page is redrawn on every refresh, and a month can hold hundreds. */
+export const MONTH_PLANS_SHOWN = 30;
 
 export type ViewModel = { summary: Summary; groups: GroupModel[]; note: string[]; month: MonthModel };
 
@@ -117,11 +127,34 @@ const planCard = (p: ParentPlan): Card => {
 
 /** A row on disk as the ledger line it will leave (retention.ts ledgerLine); `closed` is joined only when the close holds. */
 const ending = (r: Row): Ending => (r.closed ? "closed" : r.total === 0 ? "no steps" : r.done >= r.total ? "finished" : "unfinished");
-const entryOf = (r: Row): StatEntry => ({ id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo, firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: ending(r) });
+const stepOf = (s: { status: StatStep["status"]; text: string; detail?: string; link?: string }): MonthStep =>
+  ({ status: s.status, text: s.text, ...(s.detail ? { detail: s.detail } : {}), ...(s.link ? { link: s.link } : {}) });
+const entryOf = (r: Row): StatEntry => {
+  const steps = accountedSteps(r).map(stepOf);
+  return { id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo, firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: ending(r), ...(steps.length > 0 ? { steps } : {}), ...(r.continuedIn ? { continuedIn: r.continuedIn } : {}) };
+};
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayOf = (ms: number) => { const d = new Date(ms); return `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]}`; };
 
 export const monthModel = (rows: readonly Row[], ledger: readonly StatEntry[], now: number): MonthModel => {
   const s = monthSummary([...ledger, ...rows.map(entryOf)], monthOf(now));
-  return { sessions: s.sessions, ...statsLines(s) };
+  const { head, lines, repos } = statsLines(s);
+  return {
+    sessions: s.sessions, head, lines,
+    repos: s.repos.map((r, i) => ({
+      repo: r.repo, line: repos[i] ?? r.repo,
+      plans: r.plans.slice(0, MONTH_PLANS_SHOWN).map((p) => ({ id: p.id, title: p.plan || "Untitled", meta: `${p.done} of ${p.total} · ${dayOf(p.lastAt)}${p.ended === "closed" ? " · closed" : ""}`, hasSteps: p.steps.length > 0 })),
+    })),
+  };
+};
+
+/** The steps of one plan listed under "This month", by its session id: from the row while it is on disk, else from its newest ledger line. */
+export const monthPlanSteps = (rows: readonly Row[], ledger: readonly StatEntry[], id: string): MonthStep[] => {
+  const row = rows.find((r) => r.id === id);
+  if (row) return accountedSteps(row).map(stepOf);
+  const lines = ledger.filter((e) => e.id === id).sort((a, b) => b.lastAt - a.lastAt);
+  return (lines[0]?.steps ?? []).map(stepOf);
 };
 
 export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live, ledger = [] }: ModelInput): ViewModel => {
@@ -161,7 +194,9 @@ export type WebMessage =
   | { type: "close"; id: string }
   | { type: "copyResume"; text: string }
   | { type: "openWorktree"; path: string }
-  | { type: "openNote" };
+  | { type: "openNote" }
+  | { type: "openLink"; url: string }
+  | { type: "monthSteps"; id: string };
 
 export const parseMessage = (v: unknown): WebMessage | undefined => {
   const m = v as { type?: unknown; id?: unknown; text?: unknown } | null;
@@ -181,6 +216,15 @@ export const parseMessage = (v: unknown): WebMessage | undefined => {
     case "pane": {
       const id = str(m.id);
       return id ? { type: m.type, id } : undefined;
+    }
+    case "monthSteps": {
+      const id = (v as { id?: unknown }).id;
+      return typeof id === "string" && id.length > 0 && id.length <= 64 ? { type: "monthSteps", id } : undefined;
+    }
+    case "openLink": {
+      // Only an http or https address: this is what the host hands to the browser
+      const url = (v as { url?: unknown }).url;
+      return isLink(url) ? { type: "openLink", url } : undefined;
     }
     case "copyResume": {
       const text = str(m.text);

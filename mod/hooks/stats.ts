@@ -6,10 +6,28 @@
 export type Ending = 'finished' | 'closed' | 'unfinished' | 'no steps'
 
 /** One ledger line, or one row still on disk in the same shape. `firstAt` is null for rows from before startedAt: unknown, not zero. */
-export type StatEntry = { id: string; plan: string; done: number; total: number; repo: string; firstAt: number | null; lastAt: number; ended: Ending }
+export type StatStep = { text: string; status: 'done' | 'now' | 'todo' | 'not needed'; detail?: string; link?: string }
+export type StatEntry = { id: string; plan: string; done: number; total: number; repo: string; firstAt: number | null; lastAt: number; ended: Ending; steps?: StatStep[]; continuedIn?: string }
 
 const ENDINGS: readonly string[] = ['finished', 'closed', 'unfinished', 'no steps']
+const STATUSES: readonly string[] = ['done', 'now', 'todo', 'not needed']
+const LINK = /^https?:\/\/[^\s"'<>]+$/i
 const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+
+/** A line's steps: one without a text is dropped, an unknown status reads as todo, a link must be http or https. */
+const stepsFrom = (v: unknown): StatStep[] | undefined => {
+  if (!Array.isArray(v)) return undefined
+  const out: StatStep[] = []
+  for (const s of v as (Record<string, unknown> | null)[]) {
+    if (!s || typeof s.text !== 'string') continue
+    out.push({
+      text: s.text, status: (STATUSES.includes(s.status as string) ? s.status : 'todo') as StatStep['status'],
+      ...(typeof s.detail === 'string' && s.detail ? { detail: s.detail } : {}),
+      ...(typeof s.link === 'string' && LINK.test(s.link) ? { link: s.link } : {}),
+    })
+  }
+  return out.length > 0 ? out : undefined
+}
 
 /** The whole lines of a month's ledger; a torn line from a crash, or one of the wrong shape, is skipped. */
 export const entriesFromLedger = (text: string): StatEntry[] => {
@@ -18,16 +36,21 @@ export const entriesFromLedger = (text: string): StatEntry[] => {
     let v: Record<string, unknown> | null
     try { v = JSON.parse(line) } catch { continue }
     if (!v || typeof v.id !== 'string' || !num(v.lastAt) || !num(v.done) || !num(v.total) || !ENDINGS.includes(v.ended as string)) continue
+    const steps = stepsFrom(v.steps)
     out.push({
       id: v.id, plan: typeof v.plan === 'string' ? v.plan : '', done: v.done as number, total: v.total as number,
       repo: typeof v.repo === 'string' ? v.repo : '', firstAt: num(v.firstAt) ? v.firstAt as number : null, lastAt: v.lastAt as number, ended: v.ended as Ending,
+      ...(steps ? { steps } : {}),
+      ...(typeof v.continuedIn === 'string' && v.continuedIn ? { continuedIn: v.continuedIn } : {}),
     })
   }
   return out
 }
 
-export type RepoSummary = { repo: string; sessions: number; finished: number; done: number; total: number }
-export type MonthSummary = { month: string; sessions: number; finished: number; closed: number; unfinished: number; noSteps: number; done: number; total: number; repos: RepoSummary[] }
+/** A plan counted this month, however it ended: what "This month" lists under its repo. An unfinished one still shows the steps it did. */
+export type PlanDone = { id: string; plan: string; done: number; total: number; ended: Ending; lastAt: number; steps: StatStep[] }
+export type RepoSummary = { repo: string; sessions: number; finished: number; done: number; total: number; plans: PlanDone[] }
+export type MonthSummary = { month: string; sessions: number; finished: number; closed: number; unfinished: number; done: number; total: number; repos: RepoSummary[] }
 
 /** The month a time falls in, local time, YYYY-MM: the same as retention.ts ledgerMonth, which names the ledger file. */
 export const monthOf = (ms: number) => {
@@ -38,7 +61,9 @@ export const monthOf = (ms: number) => {
 /**
  * The month's sums. A session counts once, by its newest entry (a row spared mid-run can leave an early ledger line,
  * and a row still on disk is newer than any line about it), and only when that newest entry falls in `month`.
- * Repos come most sessions first.
+ * A session with no steps is not counted (Macdara, 2026-11-22): a window opened in System32 or Temp is not work,
+ * and beside the other counts it read as work left undone. Repos come most sessions first; each lists its
+ * finished and closed plans, newest first.
  */
 export const monthSummary = (entries: readonly StatEntry[], month: string): MonthSummary => {
   const newest = new Map<string, StatEntry>()
@@ -46,26 +71,30 @@ export const monthSummary = (entries: readonly StatEntry[], month: string): Mont
     const had = newest.get(e.id)
     if (!had || e.lastAt > had.lastAt) newest.set(e.id, e)
   }
-  const s: MonthSummary = { month, sessions: 0, finished: 0, closed: 0, unfinished: 0, noSteps: 0, done: 0, total: 0, repos: [] }
+  const s: MonthSummary = { month, sessions: 0, finished: 0, closed: 0, unfinished: 0, done: 0, total: 0, repos: [] }
   const repos = new Map<string, RepoSummary>()
   for (const e of newest.values()) {
-    // No plan and no steps: a window opened and left, which the panel hides too (rows.ts visibleRows)
-    if (monthOf(e.lastAt) !== month || (!e.plan && e.total === 0)) continue
+    if (monthOf(e.lastAt) !== month || e.total === 0) continue
+    // Continued by /clear into a session that reported steps: that one carries the plan, so this one is not counted
+    // again. Measured 2026-11-22: 224 of 432 "unfinished" sessions in one month were earlier links of such a chain.
+    const next = e.continuedIn ? newest.get(e.continuedIn) : undefined
+    if (next && next.total > 0) continue
     s.sessions++
     if (e.ended === 'finished') s.finished++
     else if (e.ended === 'closed') s.closed++
-    else if (e.ended === 'unfinished') s.unfinished++
-    else s.noSteps++
+    else s.unfinished++
     s.done += e.done
     s.total += e.total
     const name = e.repo || '?'
-    const r = repos.get(name) ?? { repo: name, sessions: 0, finished: 0, done: 0, total: 0 }
+    const r = repos.get(name) ?? { repo: name, sessions: 0, finished: 0, done: 0, total: 0, plans: [] }
     r.sessions++
     if (e.ended === 'finished') r.finished++
     r.done += e.done
     r.total += e.total
+    r.plans.push({ id: e.id, plan: e.plan, done: e.done, total: e.total, ended: e.ended, lastAt: e.lastAt, steps: e.steps ?? [] })
     repos.set(name, r)
   }
+  for (const r of repos.values()) r.plans.sort((a, b) => b.lastAt - a.lastAt || a.id.localeCompare(b.id))
   s.repos = [...repos.values()].sort((a, b) => b.sessions - a.sessions || a.repo.localeCompare(b.repo))
   return s
 }
@@ -78,7 +107,7 @@ export const statsLines = (s: MonthSummary) => {
   const [y, m] = s.month.split('-')
   const head = `${MONTHS[Number(m) - 1] ?? s.month} ${y}: ${plural(s.sessions, 'session')}`
   if (s.sessions === 0) return { head, lines: [] as string[], repos: [] as string[] }
-  const endings = ([[s.finished, 'finished'], [s.closed, 'closed'], [s.unfinished, 'unfinished'], [s.noSteps, 'no steps']] as const)
+  const endings = ([[s.finished, 'finished'], [s.closed, 'closed'], [s.unfinished, 'unfinished']] as const)
     .filter(([n]) => n > 0).map(([n, w]) => `${n} ${w}`).join(' · ')
   return {
     head,

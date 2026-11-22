@@ -25,6 +25,7 @@ const GUIDE = [
   'Add a `detail` (1-2 plain sentences) to a step when its label alone does not say what it covers; resend it with the whole list.',
   'Skip it for one-shot questions.',
   'Give a step a `check` ({exists: path} or {gone: path}) when a path proves it done, such as a build output or a removed worktree: the panel then closes the card itself once this session is gone and every open step checks out.',
+  'Give a step a `link` (one https address) when it produced something to open, such as its pull request: the panel shows it and keeps it after the session is gone.',
   'When you finish work that another session\'s card still lists, close that card with `questlog_close`, giving its session tag and, for every step it has open, finished with what proves it or not needed with why. Call it with no session to list the cards you can close.',
 ].join(' ')
 
@@ -249,6 +250,7 @@ export const register: Register = (on, options) => {
                   description: 'Optional: one path that proves this step done, as {exists: path} or {gone: path}, absolute or relative to the session folder. Once this session is gone, the panel closes the card itself when every open step\'s path checks out. A path only, never a command.',
                   properties: { exists: { type: 'string' }, gone: { type: 'string' } },
                 },
+                link: { type: 'string', description: 'Optional: one https address this step produced, such as its pull request. Shown on the step and kept in the month\'s finished work.' },
               },
               required: ['text', 'status'],
             },

@@ -43,11 +43,30 @@ export const endingOf = (r: Row, close?: Close): Ending =>
 export const isExpired = (r: Row, close: Close | undefined, nowMs: number) =>
   nowMs - r.updatedAt >= (endingOf(r, close) === 'unfinished' ? UNFINISHED_KEEP_MS : FINISHED_KEEP_MS)
 
-/** Rule 2: one line per deleted row. `firstAt` is null for rows written before startedAt existed. */
-export const ledgerLine = (r: Row, close?: Close) => JSON.stringify({
-  id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo,
-  firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: endingOf(r, close),
-})
+/**
+ * Rule 2: one line per deleted row. `firstAt` is null for rows written before startedAt existed.
+ * The steps go with it (text, status, note and link; a check is a local path and is left behind), so what was
+ * finished can still be read once the row is gone.
+ */
+export const ledgerLine = (r: Row, close?: Close) => {
+  // A close that holds is the last word on each step it accounted for (the extension's rows.ts accountedSteps):
+  // the close file is deleted with the row, so its outcome and reason are kept here or lost
+  const closed = closeHolds(close, r) ? close.steps ?? [] : []
+  const key = (t: string) => t.trim().toLowerCase()
+  const steps = (r.steps ?? []).map(s => {
+    const c = s.status !== 'done' ? closed.find(x => key(x.text) === key(s.text)) : undefined
+    const status = c ? (c.outcome === 'finished' ? 'done' : 'not needed') : s.status
+    const detail = c ? (c.outcome === 'finished' ? c.why || s.detail : c.why) : s.detail
+    return { text: s.text, status, ...(detail ? { detail } : {}), ...(s.link ? { link: s.link } : {}) }
+  })
+  return JSON.stringify({
+    id: r.id, plan: r.plan, done: r.done, total: r.total, repo: r.repo,
+    firstAt: r.startedAt ?? null, lastAt: r.updatedAt, ended: endingOf(r, close),
+    ...(steps.length > 0 ? { steps } : {}),
+    // Continued by /clear: the session it names carried the plan on, so the month counts that one (stats.ts monthSummary)
+    ...(r.continuedIn ? { continuedIn: r.continuedIn } : {}),
+  })
+}
 
 /** The ledger file a row goes to: the month of its last update, local time. */
 export const ledgerMonth = (ms: number) => {

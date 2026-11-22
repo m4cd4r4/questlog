@@ -87,7 +87,17 @@ svg { display: block; }
 .note:hover { background: var(--hover); }
 .mline { padding: 2px 22px; color: var(--ink); overflow-wrap: anywhere; }
 .mline.sub { color: var(--mute); }
-.mline.repo { color: var(--mute); font-size: 12px; }
+.mline.repo { color: var(--mute); font-size: 12px; display: flex; align-items: center; gap: 4px; padding-left: 2px; }
+.mline.plan { display: flex; align-items: center; gap: 4px; padding-left: 22px; font-size: 12px; }
+.mline.plan .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mline.more { color: var(--accent); font-size: 12px; }
+.mline.tog { cursor: pointer; user-select: none; }
+.mline.tog:hover { background: var(--hover); }
+.mline.tog:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.mmeta { color: var(--faint); font-size: 11px; white-space: nowrap; flex: none; }
+.mstep { padding: 3px 12px 3px 46px; font-size: 12px; color: var(--mute); }
+.mdetail { margin: 3px 0 2px 22px; padding: 6px 9px; background: var(--surf); border-radius: 7px; line-height: 1.45; overflow-wrap: anywhere; }
+.chip.link { border: 0; cursor: pointer; color: var(--accent); flex: none; }
 .divider { height: 1px; background: var(--line); margin: 8px 0 2px; }
 .empty { padding: 14px 22px; color: var(--mute); }
 `;
@@ -155,6 +165,32 @@ function pruneState(m) {
   const stale = (k) => (k.startsWith("c:") || k.startsWith("s:") || k.startsWith("e:")) && !live.has(k);
   for (const set of [st.seen, st.open]) for (const k of [...set]) if (stale(k)) set.delete(k);
 }
+// A step's link (its pull request, say): the host opens it in the browser, and only an http or https address
+function linkChip(s) {
+  return s.link ? h("button", { class: "chip link", title: s.link, on: { click: (e) => { e.stopPropagation(); post({ type: "openLink", url: s.link }); } } }, "Open link") : null;
+}
+// The steps of the plans opened under "This month", by session id, and the ids already asked for
+const msteps = {}, masked = {};
+// One repo of "This month": its line, then (opened) the plans it finished, each opening to its steps
+function monthRepo(r) {
+  const key = "mr:" + r.repo, has = r.plans.length > 0, open = has && st.open.has(key);
+  const out = [h("div", { class: "mline repo" + (has ? " tog" : ""), tabindex: has ? 0 : null, role: has ? "button" : null, "aria-expanded": has ? String(open) : null, on: { click: () => { if (has) toggle(st.open, key); } } },
+    h("span", { class: "chev" }, has ? icon("chev") : null), h("span", { class: "grow" }, r.line))];
+  if (!open) return out;
+  for (const p of r.plans) {
+    const pk = "mp:" + r.repo + ":" + p.id, ps = p.hasSteps, po = ps && st.open.has(pk);
+    // Steps come on request, once per plan: with every model they measured 760 KB a refresh on a busy month
+    if (po && !msteps[p.id] && !masked[p.id]) { masked[p.id] = true; post({ type: "monthSteps", id: p.id }); }
+    out.push(h("div", { class: "mline plan" + (ps ? " tog" : ""), tabindex: ps ? 0 : null, role: ps ? "button" : null, "aria-expanded": ps ? String(po) : null, on: { click: () => { if (ps) toggle(st.open, pk); } } },
+      h("span", { class: "chev" }, ps ? icon("chev") : null), h("span", { class: "grow", title: p.title }, p.title), h("span", { class: "mmeta" }, p.meta)));
+    if (po) for (const s of msteps[p.id] || []) {
+      const mark = h("span", { class: "s-ic", style: s.status === "done" ? "color:var(--green)" : "color:var(--faint)" });
+      mark.append(s.status === "done" ? icon("check") : s.status === "not needed" ? icon("x") : h("span", { class: "dot" }));
+      out.push(h("div", { class: "mstep" }, h("div", { class: "s-row" }, mark, h("span", { class: "s-t", title: s.text }, s.text), linkChip(s)), s.detail ? h("div", { class: "mdetail" }, s.detail) : null));
+    }
+  }
+  return out;
+}
 function stepRow(c, s, key) {
   // A step a close said was not needed opens on its reason
   const open = st.seen.has(key) ? st.open.has(key) : !!(((s.status === "now" && c.kind === "session") || s.status === "not needed") && s.detail);
@@ -167,7 +203,7 @@ function stepRow(c, s, key) {
     class: "step " + s.status + (open ? " open" : ""), "data-d": s.detail ? true : null, tabindex: s.detail ? 0 : null,
     on: { click: () => { if (s.detail) flip(key, open); else if (s.resume) post({ type: "copyResume", text: s.resume }); } },
   },
-    h("div", { class: "s-row" }, h("span", { class: "s-ic" }, mark), h("span", { class: "s-t", title: s.text }, s.text), s.status === "not needed" ? h("span", { class: "s-more" }, "Not needed") : s.detail ? h("span", { class: "s-more" }, "Details") : null),
+    h("div", { class: "s-row" }, h("span", { class: "s-ic" }, mark), h("span", { class: "s-t", title: s.text }, s.text), linkChip(s), s.status === "not needed" ? h("span", { class: "s-more" }, "Not needed") : s.detail ? h("span", { class: "s-more" }, "Details") : null),
     s.detail ? h("div", { class: "detail" }, s.detail, s.resume ? h("div", { style: "margin-top:6px;display:flex;gap:6px" }, h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "copyResume", text: s.resume }); } } }, "Copy resume"), s.worktree ? h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "openWorktree", path: s.worktree }); } } }, "Open worktree") : null) : null) : null);
 }
 function card(c) {
@@ -259,12 +295,18 @@ function render() {
     if (open) {
       root.append(h("div", { class: "mline" }, mo.head));
       for (const l of mo.lines) root.append(h("div", { class: "mline sub" }, l));
-      for (const r of mo.repos) root.append(h("div", { class: "mline repo" }, r));
+      // Five repos, most sessions first; the rest wait behind one line
+      const more = mo.repos.length > 5, all = st.open.has("m:more");
+      for (const r of more && !all ? mo.repos.slice(0, 5) : mo.repos) root.append(...monthRepo(r));
+      if (more) root.append(h("div", { class: "mline more tog", tabindex: 0, role: "button", on: { click: () => toggle(st.open, "m:more") } }, all ? "Show the top 5 repos" : (mo.repos.length - 5) + " more " + (mo.repos.length - 5 === 1 ? "repo" : "repos")));
     }
   }
 }
-window.addEventListener("message", (e) => { if (e.data && e.data.type === "model") { st.model = e.data.model; pruneState(st.model); draw(); } });
-document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline")) { e.preventDefault(); e.target.click(); } });
+window.addEventListener("message", (e) => {
+  if (e.data && e.data.type === "model") { st.model = e.data.model; pruneState(st.model); draw(); }
+  else if (e.data && e.data.type === "monthSteps" && typeof e.data.id === "string" && Array.isArray(e.data.steps)) { msteps[e.data.id] = e.data.steps; if (st.model) draw(); }
+});
+document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline, .mline.tog")) { e.preventDefault(); e.target.click(); } });
 post({ type: "ready" });
 `;
 
