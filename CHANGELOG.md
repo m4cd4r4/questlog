@@ -2,7 +2,7 @@
 
 All notable changes to the Questlog mod and VS Code extension (called Session Compass before 1.0.0). Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mod and the extension are versioned separately until 1.0.0.
 
-## 1.2.0 - unreleased
+## 1.2.0 - 2026-11-22
 
 ### Added
 - "This month" in the sidebar now lists the month's work. Click a repo to see its plans, newest first, finished or not, and click a plan to see its steps and their notes.
@@ -16,7 +16,7 @@ All notable changes to the Questlog mod and VS Code extension (called Session Co
 - "This month" shows the five repos with the most sessions. The rest wait behind one line.
 - After `/clear` the new session keeps the plan it was working on. Its card starts with the same plan name and steps, the done ones still ticked, as a restart already did. Before, the new session was told it was a new task and wrote a new plan name, so one piece of work showed as several unfinished ones. A finished plan is not carried, and a different task still gets its own name.
 
-## 1.1.0 - unreleased
+## 1.1.0 - 2026-11-06
 
 ### Added
 - `/questlog-stats` prints this month: sessions, how they ended, steps done, then one line per repo. The sidebar shows the same under "This month".

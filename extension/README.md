@@ -10,6 +10,10 @@ Sessions with plan steps left get a play button. One click reopens the session i
 
 ![An unfinished session row with the play button that reopens it](https://raw.githubusercontent.com/m4cd4r4/questlog/main/extension/media/walkthrough/4-unfinished.png)
 
+## This month
+
+Under the sessions, **This month** counts the month's sessions: how many finished, how many were closed, how many are unfinished, and steps done. Click a repo to see its plans, newest first, and click a plan to see its steps and notes. A step with a link, such as its pull request, shows an Open link button.
+
 ## Needs the mod
 
 This extension only reads what the **questlog mod** writes to `~/.claude/questlog/` (or `$CLAUDE_CONFIG_DIR/questlog/`). Without the mod the view is empty. Install the mod from your terminal:
