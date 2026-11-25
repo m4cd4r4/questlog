@@ -16,16 +16,19 @@ is, what has to be written again for Questlog, and what he still has to decide.
 Nothing here has run in a real VS Code window yet. The source was checked with its tests, a type check, a
 build and screenshots of the page drawn from seeded data.
 
-## Decide first
+## Decided first (Macdara, 2026-11-25, by card)
 
-Three answers are needed before the first port pull request. The rest are under "Questions for Macdara" and
+Three answers were needed before the first port pull request. The rest are under "Questions for Macdara" and
 can wait until the pull request they belong to.
 
-| | Question | Claude recommends |
+| | Question | His answer |
 |---|---|---|
 | A | The names (question 15). They become public at release. | CLI `questlog-wt`, settings under `questlog.worktrees.*`, mod option `worktree_line`, files in `questlog/worktrees/` |
-| B | How many pull requests, and what is in each (question 16). | Three, in the order under "Pull requests". Closing gets its own because it removes folders. |
-| C | The word "Close" (question 17). The sidebar already has a Close button that closes a card. | Worktree button and setting say "Remove worktree"; the card button keeps "Close" |
+| B | How many pull requests, and what is in each (question 16). | Three, in the order under "Pull requests". Removing gets its own because it removes folders. |
+| C | The word "Close" (question 17). The sidebar already has a Close button that closes a card. | The worktree button says "Remove worktree", the batch "Remove N safe", the setting is `removeCommand`. The card button keeps "Close". |
+
+So wherever this plan says a worktree is "closed", the sidebar says "removed". "Closable" as a verdict name is
+display wording too, and goes to him as options in pull request 2.
 
 ## Decisions already made (Macdara, 2026-11-25)
 
@@ -229,12 +232,12 @@ answered; each says what the code does today. "Row" means a row of the source pl
 
 ### New for the port
 
-15. **Names**, as in the table above.
-16. **Three pull requests**, as in the table above. The card said two to three.
+15. **Names**, as in the table above. **Answered 2026-11-25: yes, these names.**
+16. **Three pull requests**, as in the table above. **Answered 2026-11-25: three, as planned.**
 17. **"Close" means two things.** A card's Close button records that its plan is done. A worktree's Close
-    removes a folder. Options: (a) worktree button "Remove worktree", batch "Remove N safe", setting
-    `removeCommand`; (b) both say Close; (c) rename the card button to "Mark done" (already asked for in
-    `docs/CLAUDE-TODO.md` item 13) and keep Close for worktrees.
+    removes a folder. **Answered 2026-11-25: "Remove worktree", "Remove N safe", `removeCommand`; the card
+    button keeps "Close".** The options not taken: both say Close; rename the card button to "Mark done"
+    (`docs/CLAUDE-TODO.md` item 13, still open on its own).
 18. **Where the block sits in a repo's group.** After the session cards and before the "ended" line, or last
     in the group. The source had no ended line. Both are shown in pull request 2's screenshots.
 19. **After the port:** does this ship as 1.3.0 or wait to be batched with other work, and is
