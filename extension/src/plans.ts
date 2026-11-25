@@ -14,6 +14,10 @@ export type RegistryEntry = {
   repo_path?: string;
   worktree_path?: string | null;
   last_activity_at?: string;
+  brief_local_path?: string | null;
+  brief_full_text?: string | null;
+  created_at?: string | null;
+  materialised_at?: string | null;
 };
 
 export type SliceState = "done" | "working" | "blocked" | "due" | "held" | "ready";

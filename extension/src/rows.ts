@@ -197,7 +197,7 @@ export const bar = (done: number, total: number, width = 8) => {
   return "■".repeat(full) + "□".repeat(width - full);
 };
 
-const cut = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
+export const cut = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
 
 export const planOf = (r: Row) => r.plan || "(no plan yet)";
 
@@ -241,9 +241,11 @@ export const doneOf = (r: Row) => (r.closed?.steps?.length ? r.total : r.done);
 /** The step in progress as a surface names it; none once the card is closed. */
 export const nowOf = (r: Row) => (r.closed ? "" : stepsOf(r).find((s) => s.status === "now")?.text ?? r.now);
 
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+/** A path in one spelling: forward slashes, no trailing slash, lower case. The only path normaliser; compare paths through it. */
+export const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
-const inside = (path: string, folder: string) => {
+/** `path` is `folder` or sits somewhere under it, whatever the slashes or letter case. */
+export const inside = (path: string, folder: string) => {
   const p = norm(path);
   const f = norm(folder);
   return p === f || p.startsWith(`${f}/`);
@@ -340,10 +342,8 @@ export const canResume = (r: Row, nowMs: number, openTags: ReadonlySet<string>, 
   resumeCommandOf(r) !== undefined &&
   (isStale(r, nowMs) || closed || (inOpenFolder(r.cwd!, folders) && !openTags.has(r.id.slice(0, 6).toLowerCase())));
 
-const flat = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-
 /** The Claude extension lists a window's sessions by folder, so a row only reopens from the window that has its folder open. */
-export const inOpenFolder = (cwd: string, openFolders: readonly string[]) => openFolders.some((f) => flat(f) === flat(cwd));
+export const inOpenFolder = (cwd: string, openFolders: readonly string[]) => openFolders.some((f) => norm(f) === norm(cwd));
 
 export const COPY_ID_COMMAND = "questlog.copySessionId";
 
