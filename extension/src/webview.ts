@@ -17,7 +17,7 @@ body.vscode-light { --accent: #b9603f; --accent-ink: #8a3f22; }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 0 0 12px; color: var(--ink); font: 13px/1.4 var(--vscode-font-family); background: transparent; }
 button { font: inherit; color: inherit; }
-button:focus-visible, .card:focus-visible, .grp:focus-visible, .sec:focus-visible, .step:focus-visible, .endedline:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+button:focus-visible, .card:focus-visible, .grp:focus-visible, .sec:focus-visible, .step:focus-visible, .endedline:focus-visible, .wt-head:focus-visible, .wt-tog:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 svg { display: block; }
 .grow { flex: 1; }
 .ib { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 5px; color: var(--mute); border: 0; background: none; cursor: pointer; padding: 0; }
@@ -78,7 +78,7 @@ svg { display: block; }
 .s-ic { width: 14px; height: 14px; flex: none; display: grid; place-items: center; }
 .s-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .step.done .s-t, .step.not.needed .s-t { color: var(--mute); text-decoration: line-through; text-decoration-color: var(--faint); }
-.step.now .s-t { font-weight: 600; }
+.step.now .s-t, .step.needs .s-t { font-weight: 600; }
 .s-more { color: var(--faint); font-size: 11px; }
 .step.open .s-more { color: var(--accent); }
 .detail { display: none; margin: 4px 0 2px 22px; padding: 7px 10px; background: var(--surf); border-radius: 7px; color: var(--mute); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
@@ -100,6 +100,25 @@ svg { display: block; }
 .chip.link { border: 0; cursor: pointer; color: var(--accent); flex: none; }
 .divider { height: 1px; background: var(--line); margin: 8px 0 2px; }
 .empty { padding: 14px 22px; color: var(--mute); }
+.wt-note { padding: 0 14px 6px; color: var(--mute); font-size: 12px; }
+.wt-path { padding: 6px 12px 0 30px; color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-head { display: flex; align-items: baseline; gap: 6px; margin: 2px 8px 0; padding: 5px 4px 4px 14px; border-radius: 7px; color: var(--mute); font-size: 12px; cursor: pointer; user-select: none; }
+.wt-head .chev { align-self: flex-start; margin-top: 1px; }
+.wt-head b { font-weight: 600; color: var(--ink); flex: none; }
+.wt-c { min-width: 0; overflow-wrap: anywhere; }
+.wt-head:hover, .wt-tog:hover { background: var(--hover); }
+.wt-seq { margin: 0 8px 0 22px; padding: 2px 12px; color: var(--mute); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wt-seq-n { color: var(--ink); }
+.wt-seq-s { margin-left: 10px; }
+.wt-seq .dot { display: inline-block; margin-right: 4px; }
+.card.wt { margin-left: 22px; padding: 4px 12px; }
+.card.wt .age span + span { margin-left: 8px; }
+.wt-age { display: inline-block; min-width: 26px; text-align: right; }
+.dot.hollow { background: none; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.wt-x { margin: 0 8px 4px 54px; padding: 7px 10px; background: var(--surf); border-radius: 7px; color: var(--mute); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.wt-x .why { color: var(--ink); }
+.wt-tog { display: flex; align-items: center; gap: 6px; margin: 1px 8px 1px 22px; padding: 4px 12px; border-radius: 7px; color: var(--mute); font-size: 12px; cursor: pointer; user-select: none; }
+.wt-tog-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
 
 const SCRIPT = `
@@ -162,8 +181,72 @@ function stepKeys(c) {
 function pruneState(m) {
   const live = new Set();
   for (const g of m.groups) { live.add("e:" + g.repo); for (const c of [...g.cards, ...(g.ended || [])]) { live.add("c:" + c.id); for (const k of stepKeys(c)) live.add(k); } }
-  const stale = (k) => (k.startsWith("c:") || k.startsWith("s:") || k.startsWith("e:")) && !live.has(k);
-  for (const set of [st.seen, st.open]) for (const k of [...set]) if (stale(k)) set.delete(k);
+  // Worktree rows are keyed by path ("w:"), their blocks by the main checkout ("wb:" block, "wm:" show more, "wc:" closable)
+  for (const g of m.groups) for (const b of g.worktrees || []) {
+    for (const p of ["wb:", "wm:", "wc:"]) live.add(p + b.repoPath);
+    for (const r of [...b.rows, ...(wrows[b.repoPath] || [])]) live.add("w:" + r.path);
+  }
+  const stale = (k) => /^(c|s|e|w|wb|wm|wc):/.test(k) && !live.has(k);
+  for (const set of [st.seen, st.open, st.closed]) for (const k of [...set]) if (stale(k)) set.delete(k);
+}
+const WDOT = { "needs-you": "a", busy: "b", "in-flight": "", orphan: "", closable: "g", missing: "r", unread: "hollow" };
+const MAX_WT_ROWS = 10;
+// A block's rows past the first ten, and its Closable ones, come on request (worktreeRows): with every row on every
+// refresh, 320 worktrees measured 121 KB. Kept by the block's main checkout; asked for again once per new scan.
+const wrows = {}, wasked = {};
+function fullRows(b) {
+  if (!wasked[b.repoPath]) { wasked[b.repoPath] = true; post({ type: "worktreeRows", repoPath: b.repoPath }); }
+  return wrows[b.repoPath];
+}
+function onKey(el) { return (e) => { if (e.target === el && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); el.click(); } }; }
+// The row shows r.short, the slug with the repo's name dropped from the front (built in worktrees/view.ts); the tooltip keeps the whole slug
+function wtRow(r) {
+  const key = "w:" + r.path;
+  const expandable = !!(r.reason || r.facts.length);
+  const open = expandable && st.open.has(key);
+  const acts = [r.canOpen ? act("Open worktree", "open", { type: "openWorktree", path: r.path }) : null, act("Copy path", "copy", { type: "copyPath", path: r.path })];
+  const head = h("div", { class: "card wt", tabindex: 0, "aria-expanded": expandable ? String(open) : null, "aria-label": r.slug + ", " + r.label, on: { click: () => { if (expandable) toggle(st.open, key); } } },
+    h("span", { class: "dot " + (WDOT[r.verdict] || ""), title: r.label }),
+    h("span", { class: "t", title: r.slug }, expandable ? h("span", { class: "caret" }, "\\u203a") : null, r.short),
+    h("span", { class: "age" }, r.pr != null ? h("span", {}, "#" + r.pr) : null, r.size ? h("span", {}, r.size) : null, r.age ? h("span", { class: "wt-age" }, r.age) : null),
+    h("span", { class: "acts" }, acts));
+  head.addEventListener("keydown", onKey(head));
+  return [head, open ? h("div", { class: "wt-x" }, r.reason ? h("div", { class: "why" }, r.reason) : null, r.facts.map((f) => h("div", {}, f))) : null];
+}
+function wtToggle(set, key, open, label) {
+  const el = h("div", { class: "wt-tog", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(set, key) } }, h("span", { class: "chev" }, icon("chev")), h("span", { class: "wt-tog-l" }, label));
+  el.addEventListener("keydown", onKey(el));
+  return el;
+}
+const MAX_WT_SEQ = 5;
+// One line per sequence: its name, then each step in order as the step's verdict dot and its name. The rows under it are not regrouped.
+function wtSeq(s) {
+  const whole = s.name + ": " + s.steps.map((x) => x.step + " " + x.label).join(", ");
+  return h("div", { class: "wt-seq", title: whole, "aria-label": "Sequence " + whole },
+    h("span", { class: "wt-seq-n" }, s.name),
+    s.steps.map((x) => h("span", { class: "wt-seq-s" }, h("span", { class: "dot " + (WDOT[x.verdict] || "") }), x.step)));
+}
+// One scanned repo's worktrees, after its group's cards and before its ended line. The path heads the block only when the group holds two repos of one name.
+function wtBlock(b, many) {
+  const open = !st.closed.has("wb:" + b.repoPath);
+  const out = [many ? h("div", { class: "wt-path", title: b.repoPath }, b.repoPath) : null,
+    h("div", { class: "wt-head", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(st.closed, "wb:" + b.repoPath) } },
+      h("span", { class: "chev" }, icon("chev")), h("b", {}, "Worktrees"), h("span", { class: "wt-c" }, b.count))];
+  if (!open) return out;
+  const seqs = b.sequences || [];
+  for (const s of seqs.slice(0, MAX_WT_SEQ)) out.push(wtSeq(s));
+  if (seqs.length > MAX_WT_SEQ) out.push(h("div", { class: "wt-seq more" }, "and " + (seqs.length - MAX_WT_SEQ) + " more " + (seqs.length - MAX_WT_SEQ === 1 ? "sequence" : "sequences")));
+  const all = b.more > 0 && st.open.has("wm:" + b.repoPath), shown = b.closable > 0 && st.open.has("wc:" + b.repoPath);
+  // Until the rows arrive, an opened toggle shows the rows the model already holds
+  const full = all || shown ? fullRows(b) : undefined;
+  const rest = all && full ? full.filter((r) => r.verdict !== "closable") : b.rows;
+  for (const r of rest) out.push(...wtRow(r));
+  if (b.more > 0) out.push(wtToggle(st.open, "wm:" + b.repoPath, all, all ? "Show fewer" : "Show " + b.more + " more"));
+  if (b.closable > 0) {
+    out.push(wtToggle(st.open, "wc:" + b.repoPath, shown, b.closable + " closable"));
+    if (shown && full) for (const r of full.filter((x) => x.verdict === "closable")) out.push(...wtRow(r));
+  }
+  return out;
 }
 // A step's link (its pull request, say): the host opens it in the browser, and only an http or https address
 function linkChip(s) {
@@ -197,6 +280,7 @@ function stepRow(c, s, key) {
   const mark = s.status === "done" ? (() => { const w = h("span", { style: "color:var(--green)" }); w.append(icon("check")); return w; })()
     : s.status === "now" ? h("span", { class: "dot b live" })
     : s.status === "blocked" ? h("span", { class: "dot r", title: "Blocked" })
+    : s.status === "needs" ? h("span", { class: "dot a", title: "Needs you" })
     : s.status === "not needed" ? (() => { const w = h("span", { style: "color:var(--faint)" }); w.append(icon("x")); return w; })()
     : (() => { const w = h("span", { style: "color:var(--faint)" }); const svg = document.createElementNS(NS, "svg"); svg.setAttribute("width", 12); svg.setAttribute("height", 12); svg.setAttribute("viewBox", "0 0 12 12"); svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", 1.4); const ci = document.createElementNS(NS, "circle"); ci.setAttribute("cx", 6); ci.setAttribute("cy", 6); ci.setAttribute("r", 4); svg.append(ci); w.append(svg); return w; })();
   return h("div", {
@@ -204,7 +288,7 @@ function stepRow(c, s, key) {
     on: { click: () => { if (s.detail) flip(key, open); else if (s.resume) post({ type: "copyResume", text: s.resume }); } },
   },
     h("div", { class: "s-row" }, h("span", { class: "s-ic" }, mark), h("span", { class: "s-t", title: s.text }, s.text), linkChip(s), s.status === "not needed" ? h("span", { class: "s-more" }, "Not needed") : s.detail ? h("span", { class: "s-more" }, "Details") : null),
-    s.detail ? h("div", { class: "detail" }, s.detail, s.resume ? h("div", { style: "margin-top:6px;display:flex;gap:6px" }, h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "copyResume", text: s.resume }); } } }, "Copy resume"), s.worktree ? h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "openWorktree", path: s.worktree }); } } }, "Open worktree") : null) : null) : null);
+    s.detail ? h("div", { class: "detail" }, s.detail, s.resume || s.worktree ? h("div", { style: "margin-top:6px;display:flex;gap:6px" }, s.resume ? h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "copyResume", text: s.resume }); } } }, "Copy resume") : null, s.worktree ? h("button", { class: "chip", on: { click: (e) => { e.stopPropagation(); post({ type: "openWorktree", path: s.worktree }); } } }, "Open worktree") : null) : null) : null);
 }
 function card(c) {
   const expandable = c.steps.length > 0;
@@ -232,7 +316,7 @@ function card(c) {
 }
 const FOCUSABLE = "[tabindex],button";
 function sigOf(el) {
-  const box = el.closest(".card,.grp,.sec,.step");
+  const box = el.closest(".card,.grp,.sec,.step,.wt-head,.wt-tog");
   const label = box ? (box.querySelector(".t,.s-t,.grow") || box).textContent.slice(0, 80) : "";
   return el.className + "|" + (el.title || "") + "|" + (box ? "" : el.textContent.slice(0, 20)) + "|" + label;
 }
@@ -261,6 +345,7 @@ function render() {
     h("div", { class: "legend" }, leg(s.here, "b", "here"), leg(s.running, "g", "running"), leg(s.waiting, "r", "needs you"), leg(s.held, "a", "unfinished"), leg(s.idle, "", "idle"))));
   root.append(h("div", { class: "seg", role: "group", "aria-label": "Filter" },
     ["all", "active", "held"].map((k) => h("button", { "aria-pressed": String(f === k), on: { click: () => { st.filter = k; persist(); draw(); } } }, k === "held" ? "Unfinished" : k[0].toUpperCase() + k.slice(1)))));
+  if (m.worktreeNote) root.append(h("div", { class: "wt-note" }, m.worktreeNote));
   if (m.note.length > 0) {
     const open = !st.closed.has("note");
     root.append(h("div", { class: "sec", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(st.closed, "note") } },
@@ -273,11 +358,15 @@ function render() {
     const cards = g.cards.filter(keep);
     const ended = f === "active" ? [] : (g.ended || []);
     if (cards.length === 0 && ended.length === 0 && f !== "all") continue;
+    // Active and Unfinished filter sessions: the worktree blocks show under All only
+    const blocks = f === "all" ? g.worktrees || [] : [];
     const open = !st.closed.has("g:" + g.repo);
     root.append(h("div", { class: "grp", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(st.closed, "g:" + g.repo) } },
-      h("span", { class: "chev" }, icon("chev")), h("span", { class: "grow" }, g.repo), cards.length ? h("span", { class: "pill" }, cards.length) : h("span", { class: "chip" }, "no live session")));
-    shown += cards.length + ended.length;
+      h("span", { class: "chev" }, icon("chev")), h("span", { class: "grow" }, g.repo), cards.length ? h("span", { class: "pill" }, cards.length) : blocks.length ? null : h("span", { class: "chip" }, "no live session")));
+    shown += cards.length + ended.length + blocks.length;
     if (open) for (const c of cards) root.append(...card(c).filter(Boolean));
+    // The worktree blocks sit after the session cards and before the ended line
+    if (open) for (const b of blocks) root.append(...wtBlock(b, blocks.length > 1).filter(Boolean));
     if (open && ended.length > 0) {
       const key = "e:" + g.repo, out = st.open.has(key);
       root.append(h("div", { class: "endedline", tabindex: 0, role: "button", "aria-expanded": String(out), on: { click: () => toggle(st.open, key) } }, h("span", { class: "chev" }, icon("chev")), ended.length + (ended.length === 1 ? " tab" : " tabs") + " closed with steps left"));
@@ -303,10 +392,15 @@ function render() {
   }
 }
 window.addEventListener("message", (e) => {
-  if (e.data && e.data.type === "model") { st.model = e.data.model; pruneState(st.model); draw(); }
+  if (e.data && e.data.type === "model") {
+    // A new scan: the rows already held stay on show until the fresh ones arrive, and each open block asks once more
+    if (!st.model || st.model.worktreeScanAt !== e.data.model.worktreeScanAt) for (const k of Object.keys(wasked)) delete wasked[k];
+    st.model = e.data.model; pruneState(st.model); draw();
+  }
+  else if (e.data && e.data.type === "worktreeRows" && typeof e.data.repoPath === "string" && Array.isArray(e.data.rows)) { wrows[e.data.repoPath] = e.data.rows; if (st.model) draw(); }
   else if (e.data && e.data.type === "monthSteps" && typeof e.data.id === "string" && Array.isArray(e.data.steps)) { msteps[e.data.id] = e.data.steps; if (st.model) draw(); }
 });
-document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline, .mline.tog")) { e.preventDefault(); e.target.click(); } });
+document.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".grp, .sec, .step, .endedline, .mline.tog, .wt-head, .wt-tog")){ e.preventDefault(); e.target.click(); } });
 post({ type: "ready" });
 `;
 

@@ -1,6 +1,7 @@
 import type { Questlog, Step, StepCheck, StepStatus } from '../types'
 import { CLOSE_EXT, EVIDENCE_MAX, closeHolds, evidenceOf, stepKey, type Close, type CloseStep } from './close'
 export { CLOSE_EXT, type Close, type CloseStep }
+export { CLI_FILE, CLI_PATH_FILE, SCAN_CACHE_FILE, WORKTREES_DIR, cliPathOf } from './worktree-cli'
 
 export const EMPTY: Questlog = { repo: '', branch: '', slug: '', plan: '', topic: '', steps: [], updatedAt: 0 }
 
@@ -190,6 +191,20 @@ export const noteContext = (text: string, path: string) => {
     note,
     'Tell the person this note in the first line of your first reply, before anything else.',
     'Edit the file only when they ask: add a line when they say "add a restart note", remove a line when they say that item is done.',
+  ].join('\n')
+}
+
+/** The worktree line is never longer than this, whatever the CLI printed. */
+export const WORKTREE_LINE_MAX = 200
+
+/** What a session is told about the worktrees of its repo: three lines, or '' when the CLI said nothing. */
+export const worktreeContext = (stdout: string) => {
+  const line = (stdout.split(/\r?\n/)[0] ?? '').trim()
+  if (!line) return ''
+  return [
+    cut(line, WORKTREE_LINE_MAX),
+    'This line comes from the last Questlog worktree scan. It is information only.',
+    'Never remove or prune a worktree because of it: removing a worktree is the person\'s click in the Questlog panel.',
   ].join('\n')
 }
 

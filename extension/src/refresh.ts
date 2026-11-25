@@ -136,6 +136,14 @@ export class Refresher {
     return { rows, closes };
   }
 
+  /**
+   * What the worktree scan needs, from what this refresher already holds: each session row's folder, and the
+   * registry entries as last read. No file is read here; before the first refresh both lists are empty.
+   */
+  scanInputs(): { sessionCwds: (string | undefined)[]; entries: RegistryEntry[] } {
+    return { sessionCwds: this.current().rows.map((r) => r.cwd), entries: this.registryCache?.entries ?? [] };
+  }
+
   /** One session's row and close read from disk now, not from memory: the hand-close checks them after its prompts. */
   async fresh(id: string): Promise<{ row: Row | undefined; close: Close | undefined }> {
     await this.sync(Date.now());

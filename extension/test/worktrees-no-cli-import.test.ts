@@ -37,7 +37,7 @@ test("the pattern sees every way of importing cli.ts", () => {
 
 test("no file under extension/src but cli.ts itself imports cli.ts", () => {
   assert.equal(files.length > 25, true, "the source files were not found");
-  for (const name of ["extension.ts", "model.ts", "webview.ts", "rows.ts", "plans.ts", join("worktrees", "scan.ts")]) {
+  for (const name of ["extension.ts", "model.ts", "webview.ts", "rows.ts", "plans.ts", join("worktrees", "scan.ts"), join("worktrees", "view.ts")]) {
     assert.equal(files.includes(join(SRC, name)), true, `${name} is read`);
   }
   assert.equal(files.includes(CLI), false);

@@ -185,7 +185,7 @@ Hidden sessions live in `dismissed.json` in the same folder. Sessions continued 
 
 ### What it reads and sends
 
-Reads and writes `~/.claude/questlog/`, and deletes rows in it past the times above. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. Neither part makes a network request itself.
+Reads and writes `~/.claude/questlog/`, and deletes rows in it past the times above. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. The Worktrees section runs `git` in each worktree of the repo and reads each worktree's folder to get its size. It reads the worktree registry and PortPilot's files if they exist. To see if a branch's pull request is merged it runs `gh pr list`. This asks GitHub and is the only network request. At session start the mod runs the extension's worktree script with `node` to add one line about the repo's worktrees. Turn it off with `worktree_line`.
 
 ### Moving from Session Compass
 

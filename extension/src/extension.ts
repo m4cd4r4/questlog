@@ -7,10 +7,20 @@ import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 import { decodeCache, encodeCache, parseAgents, type LiveState } from "./live";
 import { MIGRATED_KEY, migrateSettings, OLD_SECTION } from "./migrate";
-import { buildModel, monthPlanSteps, parseMessage, type WebMessage } from "./model";
+import { buildModel, monthPlanSteps, parseMessage, worktreeRowsOf, type WebMessage } from "./model";
 import { DISMISSED_FILE, LedgerReader, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
 import type { StatEntry } from "../../mod/hooks/stats.ts";
 import { pageHtml } from "./webview";
+import { defaultScanPath, scanReader, writeWhole, type ScanFile } from "./worktrees/scan";
+import { claimPathFor, parallelOf, perRepoSecondsOf, scanDue, scanMinutesOf } from "./worktrees/due";
+import { dropClaim, readClaim, writeClaim } from "./worktrees/claim";
+import { refreshScan } from "./worktrees/refresh";
+import { questlogDir } from "./worktrees/sources";
+import { cliPathFileIn, cliPathText } from "../../mod/hooks/worktree-cli.ts";
+import { realRun } from "./worktrees/run";
+import { realListServers } from "./worktrees/servers-real";
+import { isLinked } from "./worktrees/listing";
+import { isOfferedByScan, isOpenableByScan } from "./worktrees/view";
 import {
   COPY_RESUME_COMMAND, DEFAULT_RESUME, isOfferedByPlans, OPEN_WORKTREE_COMMAND, openSlices, planOnlyRepos, plansForRepo, planSummary, resumeFromArg,
   sliceDescription, sliceLabel, worktreeFromArg, type ParentPlan, type Slice, type SliceState,
@@ -102,6 +112,15 @@ async function writeLiveCache(live: Map<string, LiveState> | undefined) {
   }
 }
 
+// The worktree scan cache and the claim a scanning window leaves beside it, both in questlog/worktrees/
+const scanCachePath = () => defaultScanPath();
+const scanClaimPath = () => claimPathFor(scanCachePath());
+// The cache can run to hundreds of kilobytes: the reader parses it again only when the file changes. All async.
+const readScanFile = scanReader();
+const readScanClaim = () => readClaim(scanClaimPath());
+const writeScanClaim = () => writeClaim(scanClaimPath(), process.pid, Date.now());
+const dropScanClaim = () => dropClaim(scanClaimPath(), process.pid);
+
 const notePath = () => join(rowsDir(), NOTE_FILE);
 
 const folders = () => (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
@@ -192,6 +211,10 @@ class QuestlogView implements vscode.WebviewViewProvider {
   live: Map<string, LiveState> | undefined;
   /** The session whose tab last had focus in this window; sticky while a file has focus. */
   focusedId: string | undefined;
+  /** The worktree scan cache as last read; the page may only open or copy a path it holds. */
+  scan: ScanFile | undefined;
+  /** This window has a worktree scan under way. */
+  scanning = false;
   view: vscode.WebviewView | undefined;
 
   constructor(private readonly onMessage: (m: WebMessage) => void) {}
@@ -215,7 +238,7 @@ class QuestlogView implements vscode.WebviewViewProvider {
   onVisible: (() => void) | undefined;
 
   fire() {
-    const model = buildModel({ rows: this.rows, plans: this.plans, note: this.note, now: Date.now(), focusedId: this.focusedId, dismissed: this.dismissed, openTags: this.openTags, folders: this.folders, live: this.live, ledger: this.ledger });
+    const model = buildModel({ rows: this.rows, plans: this.plans, note: this.note, now: Date.now(), focusedId: this.focusedId, dismissed: this.dismissed, openTags: this.openTags, folders: this.folders, live: this.live, ledger: this.ledger, scan: this.scan, scanning: this.scanning });
     void this.view?.webview.postMessage({ type: "model", model });
   }
 }
@@ -229,8 +252,11 @@ export function activate(context: vscode.ExtensionContext) {
   const tree = new QuestlogView((m) => {
     switch (m.type) {
       case "ready":
+        update();
+        break;
       case "refresh":
         update();
+        void maybeScan(true);
         break;
       case "details":
         void vscode.commands.executeCommand(SHOW_DETAILS_COMMAND, m.id);
@@ -284,8 +310,18 @@ export function activate(context: vscode.ExtensionContext) {
         if (isOfferedByPlans(tree.plans, "resume", m.text)) void vscode.commands.executeCommand(COPY_RESUME_COMMAND, m.text);
         break;
       case "openWorktree":
-        if (isOfferedByPlans(tree.plans, "worktree", m.path)) void vscode.commands.executeCommand(OPEN_WORKTREE_COMMAND, m.path);
+        // A path is opened only when the registry's plans or the last worktree scan offered it, and never for a folder that is gone
+        if (isOfferedByPlans(tree.plans, "worktree", m.path) || isOpenableByScan(tree.scan, m.path)) void vscode.commands.executeCommand(OPEN_WORKTREE_COMMAND, m.path);
         break;
+      case "copyPath":
+        if (isOfferedByScan(tree.scan, m.path)) void vscode.env.clipboard.writeText(m.path).then(() => vscode.window.setStatusBarMessage(`Copied: ${m.path}`, 4000));
+        break;
+      case "worktreeRows": {
+        // A block's rows past the first ten and its Closable ones, asked for when opened: too many to send with every model
+        const rows = worktreeRowsOf(tree.scan, tree.plans, Date.now(), m.repoPath);
+        if (rows) void tree.view?.webview.postMessage({ type: "worktreeRows", repoPath: m.repoPath, rows });
+        break;
+      }
       case "openNote":
         void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(notePath()));
         break;
@@ -347,6 +383,11 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   const log = vscode.window.createOutputChannel("Questlog");
+  // Tells the mod where this extension's worktree script is, so a new session can get its worktree line.
+  void writeWhole(cliPathFileIn(questlogDir()), cliPathText(context.extensionPath)).catch((e: unknown) => {
+    log.appendLine(`${new Date().toISOString()} could not write the worktree CLI path: ${e instanceof Error ? e.message : String(e)}`);
+  });
+  const worktreesOn = () => vscode.workspace.getConfiguration("questlog").get<boolean>("worktrees.enabled", true);
   let lastOutcome = "";
   let polling = false;
   /** Takes the answer. Off the refresh path, a change redraws. */
@@ -411,6 +452,8 @@ export function activate(context: vscode.ExtensionContext) {
     tree.note = snap.note;
     tree.dismissed = snap.dismissed;
     tree.plans = snap.plans;
+    // Off: no block is drawn and this window never scans; `questlog-wt scan` still writes the cache
+    tree.scan = worktreesOn() ? await readScanFile(scanCachePath()) : undefined;
     draw();
   };
 
@@ -432,6 +475,82 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } while (again);
     })().finally(() => (running = undefined));
+  };
+
+  let lastScanOutcome = "";
+  // When this window's last scan ended and whether it failed: a failing scan waits before it is tried again
+  let lastScanAttemptAt: number | undefined;
+  let lastScanFailed = false;
+  // Set while the decision below reads the cache and the claim, so two calls in one window never both start a scan
+  let deciding = false;
+  /**
+   * Starts a worktree scan when one is due: one per machine, only from a window showing the panel. The scan
+   * runs as child processes and is never awaited by a refresh; when it ends the panel refreshes and reads the
+   * cache again. `forced` (Refresh) skips the interval, never the running check or another window's fresh claim.
+   */
+  const maybeScan = async (forced: boolean) => {
+    if (deciding || tree.scanning) return;
+    deciding = true;
+    let start = false;
+    const cfg = vscode.workspace.getConfiguration("questlog");
+    const cachePath = scanCachePath();
+    try {
+      // The scan takes its folders and registry entries from the refresher: let a refresh under way finish first
+      if (running) await running;
+      const [cache, claim] = await Promise.all([readScanFile(cachePath), readScanClaim()]);
+      const { due } = scanDue({
+        now: Date.now(),
+        on: worktreesOn(),
+        visible: tree.view?.visible === true,
+        running: tree.scanning,
+        forced,
+        cacheScannedAt: cache?.scannedAt,
+        claimAt: claim?.at,
+        intervalMs: scanMinutesOf(cfg.get<number>("worktrees.scanMinutes")) * 60_000,
+        lastAttemptAt: lastScanAttemptAt,
+        lastFailed: lastScanFailed,
+      });
+      // The claim goes down before the first git call, so a second window with the panel open does not scan too
+      start = due && (await writeScanClaim());
+      if (start) tree.scanning = true;
+    } catch {
+      start = false;
+    } finally {
+      deciding = false;
+    }
+    if (!start) return;
+    tree.fire();
+    const t0 = Date.now();
+    const noted = (outcome: string, detail: string) => {
+      // One line per change of outcome, so a scan that keeps failing is findable and a healthy one is quiet
+      if (outcome === lastScanOutcome) return;
+      log.appendLine(`${new Date().toISOString()} worktree scan ${detail} (${Date.now() - t0} ms)`);
+      lastScanOutcome = outcome;
+    };
+    const { sessionCwds, entries } = refresher.scanInputs();
+    try {
+      const scan = await refreshScan({
+        sessionCwds,
+        entries,
+        cachePath,
+        run: realRun,
+        listServers: (known) => realListServers(realRun, known),
+        worktreeParallel: parallelOf(cfg.get<number>("worktrees.parallel")),
+        perRepoMs: perRepoSecondsOf(cfg.get<number>("worktrees.perRepoSeconds")) * 1000,
+      });
+      const linked = scan.repos.reduce((n, r) => n + r.worktrees.filter(isLinked).length, 0);
+      noted("ok", `ok, ${scan.repos.length} repos, ${linked} linked worktrees`);
+      lastScanFailed = false;
+    } catch (e) {
+      const why = (e instanceof Error ? e.message : String(e)).split("\n")[0];
+      noted(`failed: ${why}`, `failed: ${why}`);
+      lastScanFailed = true;
+    } finally {
+      lastScanAttemptAt = Date.now();
+      await dropScanClaim();
+      tree.scanning = false;
+      update();
+    }
   };
 
   /** The panel, details page, badge and status bar, from what is in memory. Sync, and reads no file. */
@@ -501,9 +620,11 @@ export function activate(context: vscode.ExtensionContext) {
     draw();
   };
   void readLedger();
+  // Showing the panel also checks whether a worktree scan is due, so a first scan does not wait for the tick
   tree.onVisible = () => {
     update();
     void readLedger();
+    void maybeScan(false);
   };
   let ticks = 0;
   const tick = setInterval(() => {
@@ -515,6 +636,7 @@ export function activate(context: vscode.ExtensionContext) {
       void readLedger();
     }
     update();
+    void maybeScan(false);
   }, TICK_MS);
   // Cheap when the shared answer is still fresh; the interval setting decides how often it really asks
   const liveTick = setInterval(() => void pollLive(), MIN_LIVE_S * 1000);
@@ -523,7 +645,10 @@ export function activate(context: vscode.ExtensionContext) {
     log,
     viewReg,
     status,
-    vscode.commands.registerCommand("questlog.refresh", update),
+    vscode.commands.registerCommand("questlog.refresh", () => {
+      update();
+      void maybeScan(true);
+    }),
     vscode.commands.registerCommand(SHOW_DETAILS_COMMAND, (arg?: unknown) => {
       const id = sessionIdFromArg(arg);
       const row = tree.rows.find((x) => x.id === id);
@@ -572,7 +697,8 @@ export function activate(context: vscode.ExtensionContext) {
     // Fires on focus moves and on label changes, so a retitled tab is picked up too
     vscode.window.tabGroups.onDidChangeTabs(update),
     vscode.window.tabGroups.onDidChangeTabGroups(update),
-    { dispose: () => { clearInterval(tick); clearInterval(liveTick); clearTimeout(timer); watcher?.close(); } },
+    // A window closed mid-scan gives its claim back, so the next window does not wait ten minutes
+    { dispose: () => { clearInterval(tick); clearInterval(liveTick); clearTimeout(timer); watcher?.close(); if (tree.scanning) void dropScanClaim(); } },
   );
   update();
 }
