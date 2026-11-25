@@ -61,7 +61,7 @@ export const monthOf = (ms: number) => {
 /**
  * The month's sums. A session counts once, by its newest entry (a row spared mid-run can leave an early ledger line,
  * and a row still on disk is newer than any line about it), and only when that newest entry falls in `month`.
- * A session with no steps is not counted (Macdara, 2026-11-22): a window opened in System32 or Temp is not work,
+ * A session with no steps is not counted: a window opened in System32 or Temp is not work,
  * and beside the other counts it read as work left undone. Repos come most sessions first; each lists its
  * finished and closed plans, newest first.
  */
@@ -102,7 +102,7 @@ export const monthSummary = (entries: readonly StatEntry[], month: string): Mont
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
-/** The wording Macdara picked (rule 6, 2026-11-06): the headline, the outcome lines and one line per repo. The panel draws the same strings. */
+/** The wording: the headline, the outcome lines and one line per repo. The panel draws the same strings. */
 export const statsLines = (s: MonthSummary) => {
   const [y, m] = s.month.split('-')
   const head = `${MONTHS[Number(m) - 1] ?? s.month} ${y}: ${plural(s.sessions, 'session')}`
