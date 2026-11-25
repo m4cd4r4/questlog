@@ -18,6 +18,12 @@
       "title": "Session ID in the tab title",
       "description": "clash (default): add a short session ID like [7b19a4] to a tab title only when another live session already has the same title. always: put it on every title. never: leave titles as they are. The footer matches tabs to sessions by title, so with never, two sessions with the same title can share a footer.",
       "default": "clash"
+    },
+    "worktree_line": {
+      "type": "boolean",
+      "title": "Worktree line at session start",
+      "description": "Tell a new session one line about the worktrees of its repo: whether its own worktree can be closed, how many others can, and files it shares with another open worktree. Needs the Questlog VS Code extension, which keeps the scan; without it nothing is said. Off never runs the check.",
+      "default": true
     }
   }
 }

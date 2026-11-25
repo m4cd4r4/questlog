@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Questlog, Step } from '../types'
 import {
-  CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, accountSteps, bar, carryContext, carryFrom, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
+  CLI_PATH_FILE, CLOSE_EXT, EMPTY, MIGRATED_MARKER, NOTE_FILE, OLD_DATA_DIR, PANE_POLL_MS, SCAN_CACHE_FILE, WORKTREES_DIR, accountSteps, cliPathOf, worktreeContext, bar, carryContext, carryFrom, claudeDir, closeOf, detailText, filesToMigrate, isClosed, noteContext, headingOf, newlyDone, paneOpenOf, pickCard, restoreFrom, rowToWrite, sessionTitleOf, sessionsReport,
   movesWork, sameReport, stage, statusText, stepsFromInput, tagModeOf, tagOf, tagToShow, title, topicOf, turnEndNudge, whereFromGit, whereLabel,
 } from './lib'
 import type { Close, Row, TagMode } from './lib'
@@ -39,6 +39,24 @@ async function git($: EngineInterface, args: string[]) {
 let showStatus = true
 // The session_tag option; register sets it on every load
 let tagMode: TagMode = 'clash'
+// The worktree_line option; register sets it on every load
+let worktreeLine = true
+// How long the worktree CLI may take at session start
+const BRIEF_TIMEOUT_MS = 5000
+
+/**
+ * What a new session is told about its repo's worktrees, or ''. The extension writes the CLI's path to
+ * questlog/worktrees/cli.json; the CLI only reads the scan cache. No file, no node, a failed or slow run, or
+ * an empty answer all mean nothing is said: the mod works without the extension.
+ */
+async function worktreeBrief($: EngineInterface, dir: string) {
+  const folder = `${dir}/questlog/${WORKTREES_DIR}`
+  const cli = cliPathOf(String((await $.fs.read(`${folder}/${CLI_PATH_FILE}`).catch(() => '')) ?? ''))
+  if (!cli) return ''
+  const cwd: string = await $.session.root()
+  const r = await $.process.run(['node', cli, 'brief', cwd, '--cache', `${folder}/${SCAN_CACHE_FILE}`], { cwd, timeoutMs: BRIEF_TIMEOUT_MS }).catch(() => undefined)
+  return r && r.exitCode === 0 ? worktreeContext(String(r.stdout ?? '')) : ''
+}
 
 // Everything that writes state goes through here: title source, pane, status, shared file.
 // Only the questlog tool is a report (moves reportedAt, so a close against the row lapses); every other save is bookkeeping.
@@ -231,6 +249,7 @@ let toolsSinceReport = 0
 export const register: Register = (on, options) => {
   showStatus = options.status_line !== false
   tagMode = tagModeOf(options.session_tag)
+  worktreeLine = options.worktree_line !== false
   on('session.start', async ($, e, next) => {
     await $.tool.register({
       name: 'questlog',
@@ -311,22 +330,32 @@ export const register: Register = (on, options) => {
     return { sections: [...r.sections, { id: `${PLUGIN}:guide`, text: GUIDE, scope: 'session' as const }] }
   })
 
-  // The restart note reaches a session started fresh, not one continued by /clear or a compact
+  // The restart note reaches a session started fresh, not one continued by /clear or a compact.
+  // After /clear the session is told the plan it carries instead. The worktree line reaches a fresh session and
+  // one after /clear (its context is empty), after the carry, never a compact, a resume or a fork.
   on('classic.SessionStart', async ($, e, next) => {
     const r = await next(e)
-    const source = (e as { source?: string }).source
+    const source = (e as { source?: string }).source ?? 'startup'
+    if (source === 'compact') return r
+    const added: string[] = []
     if (source === 'clear') {
       // The continuing session is told the plan it carries, so it keeps the name and does not write a new one
       const carried = await linkCleared($)
-      return carried ? { ...r, additionalContext: [...(r.additionalContext ?? []), carried] } : r
+      if (carried) added.push(carried)
     }
-    if (source === 'compact') return r
     const dir = await rowsDir($)
-    if (!dir) return r
-    const path = `${dir}/questlog/${NOTE_FILE}`
-    const text = await $.fs.read(path).catch(() => '')
-    const context = noteContext(String(text ?? ''), path)
-    return context ? { ...r, additionalContext: [...(r.additionalContext ?? []), context] } : r
+    if (dir && source !== 'clear') {
+      const path = `${dir}/questlog/${NOTE_FILE}`
+      const text = await $.fs.read(path).catch(() => '')
+      const note = noteContext(String(text ?? ''), path)
+      if (note) added.push(note)
+    }
+    if (dir && worktreeLine && (source === 'startup' || source === 'clear')) {
+      // Whatever goes wrong here, the carry and the restart note above are still delivered
+      const brief = await worktreeBrief($, dir).catch(() => '')
+      if (brief) added.push(brief)
+    }
+    return added.length > 0 ? { ...r, additionalContext: [...(r.additionalContext ?? []), ...added] } : r
   }).catch(($, e, next) => next(e))
 
   on('classic.UserPromptSubmit', async ($, e, next) => {

@@ -130,6 +130,29 @@
           "type": "string",
           "default": "git worktree add ../{slug} -b {slug}",
           "markdownDescription": "Command copied when you click a plan slice that has no worktree yet. `{slug}` becomes the slice's slug."
+        },
+        "questlog.worktrees.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a Worktrees block under each repo, saying which git worktrees can be closed. Off hides the block and stops this window from scanning. `questlog-wt scan` still works."
+        },
+        "questlog.worktrees.scanMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 5,
+          "markdownDescription": "How often to read every worktree again, in minutes. Your VS Code windows share one scan, and only a window showing the Questlog panel runs it. Refresh scans straight away."
+        },
+        "questlog.worktrees.parallel": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "markdownDescription": "How many worktrees of one repo are read at once. A higher number reads a large repo faster and starts more git processes."
+        },
+        "questlog.worktrees.perRepoSeconds": {
+          "type": "number",
+          "default": 20,
+          "minimum": 1,
+          "markdownDescription": "Time limit for reading one repo, in seconds. A repo that runs out of time shows as timed out, and the worktrees it did not reach read \"not read yet\"."
         }
       }
     },

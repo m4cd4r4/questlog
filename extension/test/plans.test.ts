@@ -133,3 +133,29 @@ test("isOfferedByPlans accepts only worktrees and resume text the registry suppl
   assert.equal(isOfferedByPlans(plans, "resume", "C:/work/webapp-seal-landing"), true);
   assert.equal(isOfferedByPlans(plans, "resume", "rm -rf /"), false);
 });
+
+// The live slice facts read a done slice's worktree to ask the scan about it; the guard still offers only open slices.
+const sealDone = [
+  e({ slug: "seal-landing", label: "S2", wave: 1, status: "merged", worktree_path: "C:/work/webapp-seal-landing" }),
+  e({ slug: "seal-gone", label: "S1", wave: 0, status: "merged", worktree_path: "C:/work/webapp-seal-gone" }),
+  e({ slug: "seal-web", label: "S3", wave: 2 }),
+];
+
+test("a done slice keeps its worktree path while the folder is on disk", () => {
+  const [p] = plansFromRegistry(sealDone, { now: NOW, exists: onDisk });
+  const by = Object.fromEntries(p.slices.map((s) => [s.slug, s]));
+  assert.equal(by["seal-landing"].state, "done");
+  assert.equal(by["seal-landing"].worktree, "C:/work/webapp-seal-landing");
+  assert.equal(by["seal-landing"].resume, "");
+  assert.equal(by["seal-gone"].worktree, "");
+});
+
+test("a done slice's worktree path is still not offered by isOfferedByPlans", () => {
+  const plans = plansFromRegistry(sealDone, { now: NOW, exists: onDisk });
+  assert.equal(plans.length, 1);
+  assert.equal(isOfferedByPlans(plans, "worktree", "C:/work/webapp-seal-landing"), false);
+  assert.equal(isOfferedByPlans(plans, "resume", "C:/work/webapp-seal-landing"), false);
+  const open = plans[0].slices.find((s) => s.slug === "seal-web")!;
+  assert.notEqual(open.resume, "");
+  assert.equal(isOfferedByPlans(plans, "resume", open.resume), true);
+});

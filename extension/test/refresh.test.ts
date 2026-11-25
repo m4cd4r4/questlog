@@ -124,3 +124,33 @@ test("LedgerReader: an unchanged file is not read again; a grown one is", async 
   writeFileSync(file, line("a") + line("b"));
   assert.deepEqual((await reader.read(nov)).map((e) => e.id), ["a", "b"]);
 });
+
+test("the worktrees subfolder is never read as rows and nothing in it is touched, even when the watcher names its files", async () => {
+  const wt = join(dir, "worktrees");
+  mkdirSync(wt);
+  const files = { "scan.cache": JSON.stringify({ version: 1, scannedAt: NOW, repos: [] }), "scan.claim": JSON.stringify({ at: NOW, pid: 1 }), "cli.json": JSON.stringify({ cli: "/work/cli.mjs" }) };
+  for (const [n, text] of Object.entries(files)) writeFileSync(join(wt, n), text);
+  const before = Object.fromEntries(Object.keys(files).map((n) => [n, statSync(join(wt, n)).mtimeMs]));
+  const refresher = new Refresher(() => dir);
+  for (const n of Object.keys(files)) refresher.changed(join("worktrees", n));
+  refresher.changed("worktrees");
+  const snap = await refresher.refresh(input());
+  assert.deepEqual(snap.rows.map((r) => r.id).sort(), [...ids].sort());
+  refresher.changed();
+  await refresher.refresh(input());
+  for (const n of Object.keys(files)) {
+    assert.equal(existsSync(join(wt, n)), true, n);
+    assert.equal(statSync(join(wt, n)).mtimeMs, before[n], n);
+  }
+});
+
+test("scanInputs hands out the session folders and registry entries already held, reading nothing", async () => {
+  const registry = join(root, "registry.json");
+  writeFileSync(registry, JSON.stringify({ entries: [{ slug: "a", repo_path: "/work/acme-app", worktree_path: "/work/acme-app-a" }] }));
+  const refresher = new Refresher(() => dir);
+  assert.deepEqual(refresher.scanInputs(), { sessionCwds: [], entries: [] }, "before the first refresh both lists are empty");
+  await refresher.refresh({ ...input(), registryPath: registry });
+  const { sessionCwds, entries } = refresher.scanInputs();
+  assert.deepEqual(sessionCwds, [root, root, root], "three sessions in one folder");
+  assert.deepEqual(entries.map((e) => e.repo_path), ["/work/acme-app"]);
+});

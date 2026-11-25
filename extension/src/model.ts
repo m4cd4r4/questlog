@@ -1,14 +1,22 @@
 // Pure view model for the webview: no vscode import, so node --test runs it directly.
-import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWorkLeft, isFinished, isLink, isStale, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
-import { openSlices, plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
+import { accountedSteps, ago, canResume, doneOf, endedRows, groupByRepo, hasWorkLeft, isFinished, isLink, isStale, norm, planOf, stepsOf, visibleRows, type Dismissed, type Row, type Step } from "./rows.ts";
+import { plansForRepo, planOnlyRepos, sliceLabel, type ParentPlan, type SliceState } from "./plans.ts";
 
 import type { LiveState } from "./live.ts";
+import { byName, sameName } from "./worktrees/listing.ts";
+import { repoNameOf } from "./worktrees/names.ts";
+import type { ScanFile } from "./worktrees/scan.ts";
+import { sliceViews } from "./worktrees/slices.ts";
+import { worktreeBlocks, worktreeNote, type WorktreeBlock, type WorktreeRow } from "./worktrees/view.ts";
 import { monthOf, monthSummary, statsLines, type Ending, type StatEntry, type StatStep } from "../../mod/hooks/stats.ts";
 
 export type CardState = "here" | "run" | "wait" | "idle" | "done" | "held" | "closed";
 
-/** `not needed`: a close said this open step was not required, and `detail` carries its reason. */
-export type CardStep = { status: Step["status"] | "blocked" | "not needed"; text: string; detail?: string; resume?: string; worktree?: string; link?: string };
+/**
+ * `not needed`: a close said this open step was not required, and `detail` carries its reason. `needs`: a plan
+ * slice whose worktree the scan reads Needs you, the amber dot the Worktrees block gives the same folder.
+ */
+export type CardStep = { status: Step["status"] | "blocked" | "not needed" | "needs"; text: string; detail?: string; resume?: string; worktree?: string; link?: string };
 
 export type Card = {
   id: string;
@@ -32,8 +40,37 @@ export type Card = {
   closedBy?: { tag: string; plan: string; evidence: string };
 };
 
-/** `ended`: tabs closed with steps left, drawn behind one collapsed line and left out of the summary. */
-export type GroupModel = { repo: string; cards: Card[]; ended: Card[] };
+/**
+ * `ended`: tabs closed with steps left, drawn behind one collapsed line and left out of the summary.
+ * `worktrees`: the scanned repos of this name, one block each, drawn after the cards and before the ended line;
+ * left out when the scan holds none.
+ */
+export type GroupModel = { repo: string; cards: Card[]; ended: Card[]; worktrees?: BlockModel[] };
+
+/** The rows of a block the page shows before any click: the first ten that are not Closable. */
+export const WT_ROWS_SHOWN = 10;
+/**
+ * A Worktrees block as it travels with every model. With 320 worktrees every row measured 121 KB on each
+ * refresh, so only the rows shown before a click are sent: the first `WT_ROWS_SHOWN` that are not Closable.
+ * `more` counts the other rows that are not Closable, `closable` the Closable ones; the page asks for a
+ * block's rows (worktreeRows) when the person opens either.
+ */
+export type BlockModel = Omit<WorktreeBlock, "rows"> & { rows: WorktreeRow[]; more: number; closable: number };
+
+const sentBlock = (b: WorktreeBlock): BlockModel => {
+  const rest = b.rows.filter((r) => r.verdict !== "closable");
+  return { ...b, rows: rest.slice(0, WT_ROWS_SHOWN), more: Math.max(0, rest.length - WT_ROWS_SHOWN), closable: b.rows.length - rest.length };
+};
+
+/**
+ * Every row of one block, by its main checkout's path (either slash, any letter case), for the page's
+ * worktreeRows request. Nothing for a path no block of the scan has, so the page cannot name another folder.
+ */
+export const worktreeRowsOf = (scan: ScanFile | undefined, plans: readonly ParentPlan[], now: number, repoPath: string): WorktreeRow[] | undefined => {
+  if (typeof repoPath !== "string" || repoPath === "") return undefined;
+  const key = norm(repoPath);
+  return worktreeBlocks(scan, plans, now).find((b) => norm(b.repoPath) === key)?.rows;
+};
 
 export type Summary = { sessions: number; here: number; running: number; waiting: number; held: number; idle: number };
 
@@ -50,7 +87,11 @@ export type MonthModel = { sessions: number; head: string; lines: string[]; repo
 /** The most plans one repo lists: the page is redrawn on every refresh, and a month can hold hundreds. */
 export const MONTH_PLANS_SHOWN = 30;
 
-export type ViewModel = { summary: Summary; groups: GroupModel[]; note: string[]; month: MonthModel };
+/**
+ * `worktreeNote`: one line about the worktree scan (first scan running, or a scan over a day old), else empty.
+ * `worktreeScanAt`: when the scan shown was written, 0 for none; the page asks again for rows it holds when it moves.
+ */
+export type ViewModel = { summary: Summary; groups: GroupModel[]; note: string[]; month: MonthModel; worktreeNote: string; worktreeScanAt: number };
 
 const SLICE_STEP: Record<SliceState, CardStep["status"]> = { done: "done", working: "now", blocked: "blocked", due: "todo", held: "todo", ready: "todo" };
 
@@ -69,6 +110,10 @@ export type ModelInput = {
   live?: ReadonlyMap<string, LiveState>;
   /** This month's ledger lines (refresh.ts readLedger); none when there is no ledger yet. */
   ledger?: readonly StatEntry[];
+  /** The worktree scan cache as last read; none means no worktree blocks and registry-only plan cards. */
+  scan?: ScanFile;
+  /** A worktree scan is running in this window. */
+  scanning?: boolean;
 };
 
 const sessionCard = (r: Row, now: number, focusedId?: string, openTags: ReadonlySet<string> = new Set(), folders: readonly string[] = [], live?: ReadonlyMap<string, LiveState>): Card => {
@@ -104,22 +149,35 @@ const sessionCard = (r: Row, now: number, focusedId?: string, openTags: Readonly
   };
 };
 
-const planCard = (p: ParentPlan): Card => {
-  const slices = openSlices(p);
-  const count = (s: SliceState) => p.slices.filter((x) => x.state === s).length;
-  const working = count("working");
+/**
+ * A plan's card. Each slice with a worktree in the scan takes its live facts (worktrees/slices.ts): one whose
+ * pull request merged reads done and stays listed while its folder is there, and one the registry calls done
+ * whose worktree still has work in it is listed again. With no scan the card is the registry's alone.
+ */
+const planCard = (p: ParentPlan, scan?: ScanFile): Card => {
+  const views = sliceViews(p, scan);
+  // A slice in progress, by live facts: the registry's working ones that have not merged, and the ones listed again
+  const working = views.filter((v) => v.relisted || (v.slice.state === "working" && !v.done)).length;
   return {
     id: `plan:${p.repo}:${p.name}`,
     kind: "plan",
     title: p.name,
     state: working > 0 ? "run" : "held",
     age: "",
-    done: count("done"),
+    done: views.filter((v) => v.done).length,
     total: p.slices.length,
-    held: count("held"),
+    held: p.slices.filter((s) => s.state === "held").length,
     where: "",
     now: "",
-    steps: slices.map((s) => ({ status: SLICE_STEP[s.state], text: sliceLabel(s), detail: s.why, resume: s.worktree || s.resume || undefined, worktree: s.worktree || undefined })),
+    steps: views.filter((v) => v.listed).map(({ slice: s, done, relisted, why, verdict }): CardStep => ({
+      status: done ? "done" : verdict === "needs-you" && (relisted || s.state === "working") ? "needs" : relisted ? "now" : SLICE_STEP[s.state],
+      text: sliceLabel(s),
+      detail: why,
+      // Listed again: the registry offers no resume for a done slice, so only Open worktree, which the host honours
+      // from the scan. A merged slice has nothing to resume either.
+      resume: relisted || done ? undefined : s.worktree || s.resume || undefined,
+      worktree: s.worktree || undefined,
+    })),
     open: false,
     canResume: false,
   };
@@ -157,16 +215,33 @@ export const monthPlanSteps = (rows: readonly Row[], ledger: readonly StatEntry[
   return (lines[0]?.steps ?? []).map(stepOf);
 };
 
-export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live, ledger = [] }: ModelInput): ViewModel => {
+export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openTags, folders, live, ledger = [], scan, scanning }: ModelInput): ViewModel => {
   const visible = visibleRows(rows, now, dismissed);
   const sessionGroups = groupByRepo(visible);
   const endedGroups = groupByRepo(endedRows(rows, now, dismissed));
   const named = [...sessionGroups.map((g) => g.repo), ...endedGroups.map((g) => g.repo).filter((r) => !sessionGroups.some((g) => g.repo === r))];
-  const repos = [...named, ...planOnlyRepos(plans, named)];
+  const withPlans = [...named, ...planOnlyRepos(plans, named)];
+  // A scanned repo joins the group of its name; one with linked worktrees and no group gets its own, after the others, in name order
+  const blocks = worktreeBlocks(scan, plans, now);
+  const extra: string[] = [];
+  for (const b of blocks) {
+    const name = repoNameOf(b.repoPath);
+    if (b.rows.length > 0 && name && ![...withPlans, ...extra].some((r) => sameName(r, name))) extra.push(name);
+  }
+  extra.sort(byName);
+  const repos = [...withPlans, ...extra];
   const card = (r: Row) => sessionCard(r, now, focusedId, openTags, folders, live);
-  const groups: GroupModel[] = repos.map((repo) => {
+  const groups: GroupModel[] = repos.map((repo, i) => {
     const rs = sessionGroups.find((g) => g.repo === repo)?.rows ?? [];
-    return { repo, cards: [...plansForRepo(plans, repo).map(planCard), ...rs.map(card)], ended: (endedGroups.find((g) => g.repo === repo)?.rows ?? []).map(card) };
+    // Two groups whose names differ only in letter case: the first one takes the blocks
+    const first = repos.findIndex((r) => sameName(r, repo)) === i;
+    const mine = first ? blocks.filter((b) => sameName(repoNameOf(b.repoPath), repo)) : [];
+    return {
+      repo,
+      cards: [...plansForRepo(plans, repo).map((p) => planCard(p, scan)), ...rs.map(card)],
+      ended: (endedGroups.find((g) => g.repo === repo)?.rows ?? []).map(card),
+      ...(mine.length > 0 ? { worktrees: mine.map(sentBlock) } : {}),
+    };
   });
   const cards = groups.flatMap((g) => g.cards);
   // A closed card whose tab is gone is listed for its outcome, not counted as a session; one whose tab is still open counts as idle
@@ -178,6 +253,8 @@ export const buildModel = ({ rows, plans, note, now, focusedId, dismissed, openT
     groups,
     note: [...note],
     month: monthModel(rows, ledger, now),
+    worktreeNote: worktreeNote(scan, scanning === true, now),
+    worktreeScanAt: scan?.scannedAt ?? 0,
   };
 };
 
@@ -194,6 +271,8 @@ export type WebMessage =
   | { type: "close"; id: string }
   | { type: "copyResume"; text: string }
   | { type: "openWorktree"; path: string }
+  | { type: "copyPath"; path: string }
+  | { type: "worktreeRows"; repoPath: string }
   | { type: "openNote" }
   | { type: "openLink"; url: string }
   | { type: "monthSteps"; id: string };
@@ -230,9 +309,14 @@ export const parseMessage = (v: unknown): WebMessage | undefined => {
       const text = str(m.text);
       return text ? { type: "copyResume", text } : undefined;
     }
-    case "openWorktree": {
+    case "openWorktree":
+    case "copyPath": {
       const path = str((m as { path?: unknown }).path);
-      return path ? { type: "openWorktree", path } : undefined;
+      return path ? { type: m.type, path } : undefined;
+    }
+    case "worktreeRows": {
+      const repoPath = (v as { repoPath?: unknown }).repoPath;
+      return typeof repoPath === "string" && repoPath.length > 0 && repoPath.length <= 1024 ? { type: "worktreeRows", repoPath } : undefined;
     }
     default:
       return undefined;
