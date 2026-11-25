@@ -9,7 +9,7 @@ const close = (r: Row): Close => ({ by: 'bbbbbbbb-0000-4000-8000-000000000002', 
 
 test('rowFileId: only <session uuid>.json is a row file; the note, markers, dismissed state and anything unknown are not', () => {
   expect(rowFileId(`${ID}.json`)).toBe(ID)
-  for (const name of [`${ID}.close`, 'restart-note.md', '.migrated-from-session-compass', 'dismissed.json', 'notes.json', `${ID}.json.tmp`, `x${ID}.json`, '.retention-ran', 'ledger'])
+  for (const name of [`${ID}.close`, 'restart-note.md', '.migrated-from-session-compass', 'dismissed.json', 'notes.json', `${ID}.json.tmp`, `x${ID}.json`, '.retention-ran', 'ledger', 'worktrees'])
     expect(rowFileId(name)).toBeUndefined()
 })
 
