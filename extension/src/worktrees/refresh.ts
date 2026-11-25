@@ -47,7 +47,8 @@ export const refreshScan = async (opts: RefreshOptions): Promise<ScanFile> => {
   // Which brief files are on disk, asked here without blocking; the scan then looks the answer up.
   const briefFiles = [...new Set(entries.map((e) => e?.brief_local_path).filter((p): p is string => typeof p === "string" && p !== ""))];
   const found = new Set<string>();
-  await Promise.all(briefFiles.map(async (p) => { if (await exists(p).catch(() => false)) found.add(norm(p)); }));
+  // An `exists` that throws or rejects counts as not there, as the scan's own check does.
+  await Promise.all(briefFiles.map(async (p) => { if (await Promise.resolve().then(() => exists(p)).catch(() => false)) found.add(norm(p)); }));
   const previous = await readScan(cachePath, fs);
 
   const scan = await scanRepos(folders, run, {
