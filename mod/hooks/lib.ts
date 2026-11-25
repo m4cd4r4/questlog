@@ -303,7 +303,7 @@ const isEmpty = (c: Questlog) => !c.plan && !c.topic && c.steps.length === 0
 // The title last sent is NOT taken back: the host restores the tab with whatever label it had
 // (the first prompt, or the tag of a session /clear replaced), so the first prompt after a
 // restart sends the plan title again. A tab name set by hand is overwritten on restart; ruled
-// the lesser cost (Macdara, 2026-11-03, #16).
+// the lesser cost (#16).
 export const restoreFrom = (c: Questlog, saved: Row): Questlog => {
   if (!isEmpty(c) || !saved.plan) return c
   const steps = saved.steps ?? []
@@ -323,7 +323,7 @@ const hasStepsLeft = (r: Row) => (r.steps?.length ?? 0) > 0 && r.done < r.total
  * After /clear (a relay included) the new session takes on the plan and steps of the session it continues, as a
  * restart already does (restoreFrom). Before this the new session was told it was a new task and wrote a new plan
  * name: measured over one month, 285 of 320 cleared sessions were followed by a renamed plan, 272 of them on the
- * same branch, so one piece of work read as many unfinished ones (Macdara, 2026-11-22).
+ * same branch, so one piece of work read as many unfinished ones.
  */
 export const carryFrom = (c: Questlog, old: Row): Questlog => (hasStepsLeft(old) ? restoreFrom(c, old) : c)
 
