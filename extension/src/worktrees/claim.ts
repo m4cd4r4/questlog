@@ -38,6 +38,24 @@ export const writeClaim = async (file: string, pid: number, at: number, fs: FsLi
   }
 };
 
+/** Time given to a second window's write to land before the claim is read back. */
+export const CLAIM_SETTLE_MS = 100;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Puts this window's claim down and keeps it only when it is still the one on disk after a short wait: two
+ * windows that start within milliseconds both write, the last write stands, and only that window's read-back
+ * matches. True means this window holds the claim and may scan. False when the write failed or another
+ * window's claim replaced it.
+ */
+export const takeClaim = async (file: string, pid: number, at: number, fs: FsLike = nodeFs, wait: (ms: number) => Promise<void> = sleep): Promise<boolean> => {
+  if (!(await writeClaim(file, pid, at, fs))) return false;
+  await wait(CLAIM_SETTLE_MS);
+  const held = await readClaim(file, fs);
+  return held?.pid === pid && held.at === at;
+};
+
 /** Removes the claim only while it is still this window's: a window that took over a stale one keeps its own. */
 export const dropClaim = async (file: string, pid: number, fs: ClaimFs = nodeFs): Promise<void> => {
   try {

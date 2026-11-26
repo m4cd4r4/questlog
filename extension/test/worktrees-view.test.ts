@@ -82,12 +82,15 @@ test("a timed-out repo's count line says so and counts its unread rows as not re
   assert.deepEqual(late.map((r) => r.reason), ["not read yet", "not read yet"]);
 });
 
-test("Closable rows are flagged by their verdict, and a block carries no close counts: the page counts them from the rows", () => {
+test("Closable rows are flagged by their verdict; only a Closable or Orphan row offers a removal, and the block counts the safe ones", () => {
   const [block] = worktreeBlocks(THREE, [], NOW);
   assert.deepEqual(block.rows.filter((r) => r.verdict === "closable").map((r) => r.path), ["/work/acme-app-feature-c"]);
-  assert.equal("closable" in block, false);
-  assert.equal("safe" in block, false);
-  for (const r of block.rows) assert.equal("canClose" in r, false, r.slug);
+  assert.deepEqual(block.rows.filter((r) => r.canRemove).map((r) => r.path), ["/work/acme-app-feature-c"]);
+  assert.equal(block.safe, 1);
+  const merged = scanOf([scannedRepo("/work/acme-app", [main("/work/acme-app"), closable("/work/acme-app-feature-c"), orphan("/work/acme-app-feature-o"), needsYou("/work/acme-app-feature-a"), missing("/work/acme-app-feature-m"), unread("/work/acme-app-feature-u"), scannedWt("/work/acme-app-feature-x", "feat/x", { pr: { state: "closed", number: 4 } })])]);
+  const [b] = worktreeBlocks(merged, [], NOW);
+  assert.deepEqual(b.rows.filter((r) => r.canRemove).map((r) => r.slug).sort(), ["acme-app-feature-c", "acme-app-feature-o", "acme-app-feature-x"]);
+  assert.equal(b.safe, 1, "the merged one only; an orphan and a closed-unmerged one are removable alone, never in a batch");
 });
 
 

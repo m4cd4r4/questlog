@@ -119,6 +119,8 @@ svg { display: block; }
 .wt-x .why { color: var(--ink); }
 .wt-tog { display: flex; align-items: center; gap: 6px; margin: 1px 8px 1px 22px; padding: 4px 12px; border-radius: 7px; color: var(--mute); font-size: 12px; cursor: pointer; user-select: none; }
 .wt-tog-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-safe { flex: none; border: 0; cursor: pointer; padding: 2px 8px; }
+.wt-safe:hover { color: var(--ink); }
 `;
 
 const SCRIPT = `
@@ -133,6 +135,7 @@ const ICONS = {
   copy: "M5.5 5.5h7v8h-7zM3.5 10.5v-8h7",
   panel: "M2.5 3h11v10h-11zM2.5 9.5h11",
   resume: "M5 3.5v9l7.5-4.5z",
+  trash: "M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5M6.8 7v3.8M9.2 7v3.8",
   undo: "M5.5 3L2.5 6l3 3M2.5 6h6.5a3.5 3.5 0 0 1 0 7H6",
   refresh: "M13 8a5 5 0 1 1-1.6-3.7M13 2.5v3h-3",
   check: "M2.5 6.5l2.3 2.3 4.7-5",
@@ -204,7 +207,9 @@ function wtRow(r) {
   const key = "w:" + r.path;
   const expandable = !!(r.reason || r.facts.length);
   const open = expandable && st.open.has(key);
-  const acts = [r.canOpen ? act("Open worktree", "open", { type: "openWorktree", path: r.path }) : null, act("Copy path", "copy", { type: "copyPath", path: r.path })];
+  // Remove is drawn only on a row whose verdict offers it; the host checks the path against the last scan and asks before anything is removed
+  const acts = [r.canOpen ? act("Open worktree", "open", { type: "openWorktree", path: r.path }) : null, act("Copy path", "copy", { type: "copyPath", path: r.path }),
+    r.canRemove ? act("Remove worktree", "trash", { type: "closeWorktree", path: r.path }) : null];
   const head = h("div", { class: "card wt", tabindex: 0, "aria-expanded": expandable ? String(open) : null, "aria-label": r.slug + ", " + r.label, on: { click: () => { if (expandable) toggle(st.open, key); } } },
     h("span", { class: "dot " + (WDOT[r.verdict] || ""), title: r.label }),
     h("span", { class: "t", title: r.slug }, expandable ? h("span", { class: "caret" }, "\\u203a") : null, r.short),
@@ -213,10 +218,15 @@ function wtRow(r) {
   head.addEventListener("keydown", onKey(head));
   return [head, open ? h("div", { class: "wt-x" }, r.reason ? h("div", { class: "why" }, r.reason) : null, r.facts.map((f) => h("div", {}, f))) : null];
 }
-function wtToggle(set, key, open, label) {
-  const el = h("div", { class: "wt-tog", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(set, key) } }, h("span", { class: "chev" }, icon("chev")), h("span", { class: "wt-tog-l" }, label));
+function wtToggle(set, key, open, label, extra) {
+  const el = h("div", { class: "wt-tog", tabindex: 0, role: "button", "aria-expanded": String(open), on: { click: () => toggle(set, key) } }, h("span", { class: "chev" }, icon("chev")), h("span", { class: "wt-tog-l" }, label), extra);
   el.addEventListener("keydown", onKey(el));
   return el;
+}
+// "Remove N safe" names the repo and never a list: the host builds the list from the last scan and shows it before anything is removed
+function removeSafe(b) {
+  const title = "Remove the " + (b.safe === 1 ? "worktree" : b.safe + " worktrees") + " whose pull request merged and that " + (b.safe === 1 ? "is" : "are") + " clean and pushed. The list is shown first.";
+  return h("button", { class: "chip wt-safe", title, on: { click: (e) => { e.stopPropagation(); post({ type: "closeAllSafe", repoPath: b.repoPath }); } } }, "Remove " + b.safe + " safe");
 }
 const MAX_WT_SEQ = 5;
 // One line per sequence: its name, then each step in order as the step's verdict dot and its name. The rows under it are not regrouped.
@@ -243,7 +253,7 @@ function wtBlock(b, many) {
   for (const r of rest) out.push(...wtRow(r));
   if (b.more > 0) out.push(wtToggle(st.open, "wm:" + b.repoPath, all, all ? "Show fewer" : "Show " + b.more + " more"));
   if (b.closable > 0) {
-    out.push(wtToggle(st.open, "wc:" + b.repoPath, shown, b.closable + " closable"));
+    out.push(wtToggle(st.open, "wc:" + b.repoPath, shown, b.closable + " closable", b.safe > 0 ? removeSafe(b) : null));
     if (shown && full) for (const r of full.filter((x) => x.verdict === "closable")) out.push(...wtRow(r));
   }
   return out;

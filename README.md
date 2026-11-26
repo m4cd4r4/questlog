@@ -158,6 +158,11 @@ Extension settings:
 | `questlog.agentViewSeconds` | `10` | How often to ask, in seconds. Minimum 5 |
 | `questlog.registryPath` | empty | Worktree registry the parent plans are read from. Empty means `workspaces/registry.json` in the Claude config folder |
 | `questlog.resumeCommand` | `git worktree add ../{slug} -b {slug}` | Command copied when you click a plan slice that has no worktree yet. `{slug}` becomes the slice's slug |
+| `questlog.worktrees.enabled` | `true` | Show a Worktrees block under each repo. Off hides it and stops this window from scanning |
+| `questlog.worktrees.scanMinutes` | `15` | How often to read every worktree again, in minutes. Minimum 5. Refresh scans straight away |
+| `questlog.worktrees.parallel` | `1` | How many worktrees of one repo are read at once |
+| `questlog.worktrees.perRepoSeconds` | `20` | Time limit for reading one repo, in seconds. Minimum 1 |
+| `questlog.worktrees.removeCommand` | empty | The command that removes a worktree. Empty: unlink a linked `node_modules`, run `git worktree remove <path>`, then delete the local branch if nothing on it is missing from its upstream or its pull request. A command of your own may use `{slug}` and `{path}`, and the branch is then left alone |
 
 ### Slash commands
 
@@ -185,7 +190,7 @@ Hidden sessions live in `dismissed.json` in the same folder. Sessions continued 
 
 ### What it reads and sends
 
-Reads and writes `~/.claude/questlog/`, and deletes rows in it past the times above. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. The Worktrees section runs `git` in each worktree of the repo and reads each worktree's folder to get its size. It reads the worktree registry and PortPilot's files if they exist. To see if a branch's pull request is merged it runs `gh pr list`. This asks GitHub and is the only network request. At session start the mod runs the extension's worktree script with `node` to add one line about the repo's worktrees. Turn it off with `worktree_line`.
+Reads and writes `~/.claude/questlog/`, and deletes rows in it past the times above. Runs `git` in the session's directory to find the repo and branch. The extension also runs `claude agents --json` and reads the worktree registry if one exists. The Worktrees section runs `git` in each worktree of the repo and reads each worktree's folder to get its size. It reads the worktree registry and PortPilot's files if they exist. To see if a branch's pull request is merged it runs `gh pr list`. This asks GitHub and is the only network request. At session start the mod runs the extension's worktree script with `node` to add one line about the repo's worktrees. Turn it off with `worktree_line`. A worktree is removed only when you click Remove worktree and confirm. Removing runs `git worktree remove`, and deletes the local branch only when nothing on it is missing from its upstream or its pull request.
 
 ### Moving from Session Compass
 

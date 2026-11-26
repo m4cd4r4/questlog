@@ -11,16 +11,18 @@ import { buildModel, monthPlanSteps, parseMessage, worktreeRowsOf, type WebMessa
 import { DISMISSED_FILE, LedgerReader, LIVE_CACHE_FILE, readText, Refresher } from "./refresh";
 import type { StatEntry } from "../../mod/hooks/stats.ts";
 import { pageHtml } from "./webview";
-import { defaultScanPath, scanReader, writeWhole, type ScanFile } from "./worktrees/scan";
+import { defaultScanPath, scanReader, writeScan, writeWhole, type ScanFile } from "./worktrees/scan";
 import { claimPathFor, parallelOf, perRepoSecondsOf, scanDue, scanMinutesOf } from "./worktrees/due";
-import { dropClaim, readClaim, writeClaim } from "./worktrees/claim";
+import { dropClaim, readClaim, takeClaim } from "./worktrees/claim";
 import { refreshScan } from "./worktrees/refresh";
 import { questlogDir } from "./worktrees/sources";
 import { cliPathFileIn, cliPathText } from "../../mod/hooks/worktree-cli.ts";
 import { realRun } from "./worktrees/run";
 import { realListServers } from "./worktrees/servers-real";
 import { isLinked } from "./worktrees/listing";
-import { isOfferedByScan, isOpenableByScan } from "./worktrees/view";
+import { isOfferedByScan, isOpenableByScan, withoutWorktrees } from "./worktrees/view";
+import { BUSY_TEXT, inUseReason, makeRemover, realExists, realLinkFs, removeCommandOf, removedPaths, reportText, resultText, wantsRescan, type BatchReport, type Busy, type FlowResult } from "./worktrees/close";
+import { walkSize } from "./worktrees/size";
 import {
   COPY_RESUME_COMMAND, DEFAULT_RESUME, isOfferedByPlans, OPEN_WORKTREE_COMMAND, openSlices, planOnlyRepos, plansForRepo, planSummary, resumeFromArg,
   sliceDescription, sliceLabel, worktreeFromArg, type ParentPlan, type Slice, type SliceState,
@@ -118,7 +120,8 @@ const scanClaimPath = () => claimPathFor(scanCachePath());
 // The cache can run to hundreds of kilobytes: the reader parses it again only when the file changes. All async.
 const readScanFile = scanReader();
 const readScanClaim = () => readClaim(scanClaimPath());
-const writeScanClaim = () => writeClaim(scanClaimPath(), process.pid, Date.now());
+// Put down, then read back: only the window whose claim is still on disk scans
+const writeScanClaim = () => takeClaim(scanClaimPath(), process.pid, Date.now());
 const dropScanClaim = () => dropClaim(scanClaimPath(), process.pid);
 
 const notePath = () => join(rowsDir(), NOTE_FILE);
@@ -322,6 +325,14 @@ export function activate(context: vscode.ExtensionContext) {
         if (rows) void tree.view?.webview.postMessage({ type: "worktreeRows", repoPath: m.repoPath, rows });
         break;
       }
+      case "closeWorktree":
+        // The guard, the question, the fresh re-check and the removal are all in worktrees/close.ts; a path the last scan does not offer a removal for stops there
+        void remover.one({ scan: tree.scan, path: m.path, command: removeCommand() }).then((r) => afterRemove(r, r.outcome === "busy" ? BUSY_TEXT : resultText(r), r.outcome === "removed" || r.outcome === "busy"));
+        break;
+      case "closeAllSafe":
+        // The page names a repo only: the list is built from the last scan and shown in the confirmation
+        void remover.allSafe({ scan: tree.scan, repoPath: m.repoPath, command: removeCommand() }).then((r) => afterRemove(r, r.outcome === "busy" ? BUSY_TEXT : reportText(r), r.outcome === "busy" || r.failed === undefined));
+        break;
       case "openNote":
         void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(notePath()));
         break;
@@ -388,6 +399,41 @@ export function activate(context: vscode.ExtensionContext) {
     log.appendLine(`${new Date().toISOString()} could not write the worktree CLI path: ${e instanceof Error ? e.message : String(e)}`);
   });
   const worktreesOn = () => vscode.workspace.getConfiguration("questlog").get<boolean>("worktrees.enabled", true);
+  // Removing a worktree: every decision is in worktrees/close.ts, where it is tested. Here it only gets VS Code's
+  // confirmation, the real git, file system and server lister, and what this window knows about folders in use.
+  const removeCommand = () => removeCommandOf(vscode.workspace.getConfiguration("questlog").get<unknown>("worktrees.removeCommand"));
+  const remover = makeRemover({
+    run: realRun,
+    listServers: (known) => realListServers(realRun, known),
+    exists: realExists,
+    walk: (folder, onLink) => walkSize(folder, undefined, undefined, onLink),
+    // From memory: the rows and the running sessions this window already holds, and the folders it has open
+    inUse: (path) => inUseReason(path, { rows: tree.rows, live: tree.live, folders: folders(), now: Date.now() }),
+    home: homedir(),
+    fs: realLinkFs,
+    confirm: ({ title, detail }) => Promise.resolve(vscode.window.showWarningMessage(title, { modal: true, detail }, "Remove")).then((pick) => pick === "Remove"),
+  });
+  // A scan that was under way while a folder was removed may write that worktree back: the next tick scans again
+  let rescanWanted = false;
+  /** After a removal or a batch: the removed folders leave the cache at once, the page is redrawn, and the person is told what happened. */
+  const afterRemove = async (r: FlowResult | BatchReport | Busy, text: string, fine: boolean) => {
+    const gone = removedPaths(r);
+    if (gone.length > 0) {
+      try {
+        const scan = await readScanFile(scanCachePath());
+        if (scan) await writeScan(scanCachePath(), withoutWorktrees(scan, gone));
+      } catch (e) {
+        log.appendLine(`${new Date().toISOString()} could not update the worktree cache after a removal: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (wantsRescan(r) || (gone.length > 0 && (tree.scanning || (await readScanClaim()) !== undefined))) rescanWanted = true;
+    if (text) {
+      log.appendLine(`${new Date().toISOString()} ${text}`);
+      void (fine ? vscode.window.showInformationMessage(text) : vscode.window.showWarningMessage(text));
+    }
+    update();
+  };
+
   let lastOutcome = "";
   let polling = false;
   /** Takes the answer. Off the refresh path, a change redraws. */
@@ -503,7 +549,7 @@ export function activate(context: vscode.ExtensionContext) {
         on: worktreesOn(),
         visible: tree.view?.visible === true,
         running: tree.scanning,
-        forced,
+        forced: forced || rescanWanted,
         cacheScannedAt: cache?.scannedAt,
         claimAt: claim?.at,
         intervalMs: scanMinutesOf(cfg.get<number>("worktrees.scanMinutes")) * 60_000,
@@ -512,7 +558,10 @@ export function activate(context: vscode.ExtensionContext) {
       });
       // The claim goes down before the first git call, so a second window with the panel open does not scan too
       start = due && (await writeScanClaim());
-      if (start) tree.scanning = true;
+      if (start) {
+        tree.scanning = true;
+        rescanWanted = false;
+      }
     } catch {
       start = false;
     } finally {
