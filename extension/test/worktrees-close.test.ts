@@ -253,7 +253,7 @@ test("real git: the confirmation names the ignored files and says node_modules i
   const ask = confirmOne({ path: e.path, branch: e.branch, reason: "PR #1 merged, clean" }, "", prep as Prepared);
   assert.equal(ask.detail, [
     e.path, `Branch ${e.branch}`, "PR #1 merged, clean", "",
-    "It is checked again first, then removed with git worktree remove, never by force.",
+    "It is checked again first, then removed with git worktree remove, without -f.",
     "node_modules is a link to another folder. The link is removed first. The folder it points to is not touched.",
     "Ignored files and folders that will be deleted:", ".env.local", "dist/",
   ].join("\n"));
@@ -494,7 +494,7 @@ test("a setting that is not text reads as empty, and the empty command is the de
   const r = await removeOne(input({ command: 5 as unknown as string }), d);
   assert.equal(r.outcome, "removed");
   assert.deepEqual(ranRemove(seen).map((c) => c.cmd), ["git", "git"]);
-  assert.equal(confirmOne({ path: A, branch: "feat/a", reason: "x" }, 5 as unknown as string, { ignored: [], nodeModulesLink: false }).detail.includes("never by force"), true);
+  assert.equal(confirmOne({ path: A, branch: "feat/a", reason: "x" }, 5 as unknown as string, { ignored: [], nodeModulesLink: false }).detail.includes("without -f"), true);
 });
 
 test("fake: a non-zero exit is a failure, and the folder is as it was", async () => {
@@ -685,7 +685,7 @@ test("flow: three worktrees in one parent folder, the clicked one is confirmed b
     "Branch feat/b",
     "PR #8 merged, clean",
     "",
-    "It is checked again first, then removed with git worktree remove, never by force.",
+    "It is checked again first, then removed with git worktree remove, without -f.",
     "No ignored files or folders other than node_modules.",
   ].join("\n"));
   assert.equal(resultText(r), "Removed acme-app-feature-b: folder and branch removed.");
@@ -801,7 +801,7 @@ test("batch: the list comes from the scan, the confirmation lists every folder, 
   assert.deepEqual(r, { repoPath: MAIN, outcome: "declined", removed: [], refused: [], notTried: [] });
   assert.deepEqual(asked, [{
     title: "Remove 2 worktrees of acme-app?",
-    detail: [A, C, "", "Each is checked again first. One that is no longer safe is refused and the rest carry on. Then removed with git worktree remove, never by force, one at a time. A failure stops the rest.", "No ignored files or folders other than node_modules."].join("\n"),
+    detail: [A, C, "", "Each is checked again first. One that is no longer safe is refused and the rest carry on. Then removed with git worktree remove, without -f, one at a time. A failure stops the rest.", "No ignored files or folders other than node_modules."].join("\n"),
   }]);
   assert.deepEqual(seen.filter((c) => c.args[0] !== "ls-files"), []);
   assert.equal(reportText(r), "");
@@ -816,7 +816,7 @@ test("batch: the confirmation lists only worktrees that have ignored files, then
   ];
   assert.equal(confirmAll(MAIN, items, "").detail, [
     A, B, C, "",
-    "Each is checked again first. One that is no longer safe is refused and the rest carry on. Then removed with git worktree remove, never by force, one at a time. A failure stops the rest.",
+    "Each is checked again first. One that is no longer safe is refused and the rest carry on. Then removed with git worktree remove, without -f, one at a time. A failure stops the rest.",
     "acme-app-feature a: node_modules is a link to another folder. The link is removed first. The folder it points to is not touched.",
     "Ignored files and folders that will be deleted:",
     A, "  .env.local", "  dist/", C, "  coverage/",

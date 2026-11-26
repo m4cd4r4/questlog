@@ -346,7 +346,7 @@ const IGNORED_HEAD = "Ignored files and folders that will be deleted:";
 const IGNORED_NONE = "No ignored files or folders other than node_modules.";
 const LINK_LINE = "node_modules is a link to another folder. The link is removed first. The folder it points to is not touched.";
 const howRemoved = (command: string) =>
-  removeCommandOf(command) === "" ? "removed with git worktree remove, never by force" : "handed to your remove command (questlog.worktrees.removeCommand)";
+  removeCommandOf(command) === "" ? "removed with git worktree remove, without -f" : "handed to your remove command (questlog.worktrees.removeCommand)";
 
 /** The question before one removal: the folder, its branch, why it can be removed, and what goes with it. */
 export const confirmOne = (w: { path: string; branch?: string; detached?: boolean; reason: string }, command: string, prep: Prepared): { title: string; detail: string } => ({
