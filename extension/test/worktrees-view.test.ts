@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { ParentPlan } from "../src/plans.ts";
 import { FOLDER_NOT_FOUND } from "../src/worktrees/run.ts";
 import type { ScanFile, ScannedRepo, ScannedWorktree } from "../src/worktrees/scan.ts";
-import { countLine, isOfferedByScan, isOpenableByScan, offeredWorktree, worktreeBlocks, worktreeNote } from "../src/worktrees/view.ts";
+import { countLine, isOfferedByScan, isOpenableByScan, offeredWorktree, withoutWorktrees, worktreeBlocks, worktreeNote } from "../src/worktrees/view.ts";
 import { scannedRepo, scannedWt } from "./worktrees-fixtures.ts";
 
 const NOW = Date.UTC(2026, 0, 10);
@@ -277,4 +277,23 @@ test("a sequence never crosses repos: one prefix in two repos is no sequence", (
     scannedRepo("/work/field-notes", [main("/work/field-notes"), scannedWt("/work/field-notes-pricing-s2", "feat/pricing-s2")]),
   ]);
   assert.deepEqual(worktreeBlocks(scan, [], NOW).map((b) => "sequences" in b), [false, false]);
+});
+
+test("withoutWorktrees drops only the removed linked worktree, matched without regard to case or slashes", () => {
+  const scan = scanOf([
+    scannedRepo("C:/work/app", [
+      main("C:/work/app"),
+      scannedWt("C:/work/app.git", "", { bare: true }),
+      closable("C:/work/app-a"),
+      closable("C:/work/app-b"),
+      closable("C:/work/app-c"),
+    ]),
+    scannedRepo("C:/work/other", [main("C:/work/other"), closable("C:/work/other-b")]),
+  ]);
+  const after = withoutWorktrees(scan, ["c:\\WORK\\app-b", "C:/work/app", "C:/work/app.git", "", 5 as unknown as string]);
+  assert.deepEqual(after.repos.map((r) => r.worktrees.map((w) => w.path)), [
+    ["C:/work/app", "C:/work/app.git", "C:/work/app-a", "C:/work/app-c"],
+    ["C:/work/other", "C:/work/other-b"],
+  ]);
+  assert.equal(withoutWorktrees(scan, []), scan);
 });
