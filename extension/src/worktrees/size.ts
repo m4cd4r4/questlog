@@ -37,9 +37,9 @@ const BATCH = 64;
  * The bytes of every regular file under `folder`. A junction or symlink is never followed and counts as
  * zero (node reports a Windows junction as a symbolic link). The `.git` file of a linked worktree is a
  * file like any other. A folder or file that cannot be read is skipped; nothing here throws.
- * `shouldStop` is asked before each folder is read.
+ * `shouldStop` is asked before each folder is read. `onLink` is given the path of each link met.
  */
-export const walkSize = async (folder: string, fs: SizeFs = realSizeFs, shouldStop: () => boolean = () => false): Promise<WalkResult> => {
+export const walkSize = async (folder: string, fs: SizeFs = realSizeFs, shouldStop: () => boolean = () => false, onLink?: (path: string) => void): Promise<WalkResult> => {
   let bytes = 0;
   let shares = false;
   let links = 0;
@@ -55,6 +55,7 @@ export const walkSize = async (folder: string, fs: SizeFs = realSizeFs, shouldSt
     for (const e of entries) {
       if (e.isSymbolicLink()) {
         links++;
+        onLink?.(join(dir, e.name));
         if (e.name === "node_modules") shares = true;
         continue;
       }

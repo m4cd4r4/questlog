@@ -30,6 +30,8 @@ test("the pattern sees a blocking call, name or import, and passes the promise A
 test("no file under src/worktrees, at any depth, but cli.ts makes a blocking file call", () => {
   const files = readdirSync(WORKTREES, { recursive: true, encoding: "utf8" }).filter((n) => n.endsWith(".ts") && n !== "cli.ts");
   assert.equal(files.includes("scan.ts") && files.includes("refresh.ts") && files.includes("sources.ts"), true, "the source files were not found");
+  // The removal path runs inside the host on a click, so it is held to the same rule
+  assert.equal(files.includes("close.ts") && files.includes("claim.ts"), true, "the removal and claim files were not found");
   const guilty = files.filter((n) => BLOCKING.test(code(readFileSync(join(WORKTREES, n), "utf8"))));
   assert.deepEqual(guilty, []);
 });

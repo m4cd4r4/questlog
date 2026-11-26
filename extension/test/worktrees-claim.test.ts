@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as nodeFs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dropClaim, readClaim, writeClaim, type ClaimFs } from "../src/worktrees/claim.ts";
+import { CLAIM_SETTLE_MS, dropClaim, readClaim, takeClaim, writeClaim, type ClaimFs } from "../src/worktrees/claim.ts";
 import { CLAIM_MS, claimPathFor, scanDue } from "../src/worktrees/due.ts";
 
 const MIN = 60_000;
@@ -96,4 +96,36 @@ test("an expired claim is still read, no longer holds, and the next window write
   assert.deepEqual(scanDue({ ...state, claimAt: (await readClaim(file))?.at }), { due: false, reason: "claimed" });
   assert.equal(await writeClaim(file, SECOND, NOW), true);
   assert.deepEqual(await readClaim(file), { at: NOW, pid: SECOND });
+});
+
+test("takeClaim: a window alone keeps its claim, and waits before it reads it back", async (t) => {
+  const file = claimFile(t);
+  const waited: number[] = [];
+  assert.equal(await takeClaim(file, FIRST, NOW, undefined, async (ms) => { waited.push(ms); }), true);
+  assert.deepEqual(waited, [CLAIM_SETTLE_MS]);
+  assert.deepEqual(await readClaim(file), { at: NOW, pid: FIRST });
+});
+
+test("takeClaim: a second window that writes during the wait wins, and the first does not scan", async (t) => {
+  const file = claimFile(t);
+  // The other window's write lands between this window's write and its read-back
+  const first = await takeClaim(file, FIRST, NOW, undefined, async () => { await writeClaim(file, SECOND, NOW + 1); });
+  assert.equal(first, false);
+  assert.deepEqual(await readClaim(file), { at: NOW + 1, pid: SECOND });
+});
+
+test("takeClaim: two windows starting within milliseconds, on the real file and the real wait, give exactly one scan", async (t) => {
+  const file = claimFile(t);
+  const [a, b] = await Promise.all([takeClaim(file, FIRST, NOW), takeClaim(file, SECOND, NOW + 1)]);
+  assert.equal([a, b].filter(Boolean).length, 1);
+  const held = await readClaim(file);
+  assert.equal(held?.pid, a ? FIRST : SECOND);
+});
+
+test("takeClaim: a claim that cannot be written is not taken, and nothing is waited for", async (t) => {
+  const file = claimFile(t);
+  const broken = { mkdir: async () => { throw new Error("EACCES"); }, writeFile: async () => undefined, rename: async () => undefined, readFile: async () => "" };
+  let waited = false;
+  assert.equal(await takeClaim(file, FIRST, NOW, broken, async () => { waited = true; }), false);
+  assert.equal(waited, false);
 });

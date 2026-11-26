@@ -108,9 +108,16 @@ test("parseMessage takes copyPath with a path only", () => {
   assert.equal(parseMessage({ type: "copyPath", path: 3 }), undefined);
 });
 
-test("parseMessage has no close message for a worktree", () => {
-  assert.equal(parseMessage({ type: "closeWorktree", path: "/work/acme-app-feature-c" }), undefined);
-  assert.equal(parseMessage({ type: "closeAllSafe", repoPath: "/work/acme-app" }), undefined);
+test("parseMessage takes closeWorktree with a path and closeAllSafe with a repo path, and nothing else", () => {
+  assert.deepEqual(parseMessage({ type: "closeWorktree", path: "/work/acme-app-feature-c" }), { type: "closeWorktree", path: "/work/acme-app-feature-c" });
+  assert.deepEqual(parseMessage({ type: "closeAllSafe", repoPath: "/work/acme-app" }), { type: "closeAllSafe", repoPath: "/work/acme-app" });
+  assert.equal(parseMessage({ type: "closeWorktree" }), undefined);
+  assert.equal(parseMessage({ type: "closeWorktree", path: "" }), undefined);
+  assert.equal(parseMessage({ type: "closeWorktree", path: 3 }), undefined);
+  assert.equal(parseMessage({ type: "closeAllSafe" }), undefined);
+  assert.equal(parseMessage({ type: "closeAllSafe", repoPath: "" }), undefined);
+  // The page names a repo, never a list: a list it adds is dropped
+  assert.deepEqual(parseMessage({ type: "closeAllSafe", repoPath: "/work/acme-app", paths: ["/work/elsewhere"] }), { type: "closeAllSafe", repoPath: "/work/acme-app" });
 });
 
 // Plan cards with live slice facts: the scan's verdict on a slice's worktree, on the registry's card.

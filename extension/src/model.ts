@@ -272,6 +272,8 @@ export type WebMessage =
   | { type: "copyResume"; text: string }
   | { type: "openWorktree"; path: string }
   | { type: "copyPath"; path: string }
+  | { type: "closeWorktree"; path: string }
+  | { type: "closeAllSafe"; repoPath: string }
   | { type: "worktreeRows"; repoPath: string }
   | { type: "openNote" }
   | { type: "openLink"; url: string }
@@ -310,9 +312,16 @@ export const parseMessage = (v: unknown): WebMessage | undefined => {
       return text ? { type: "copyResume", text } : undefined;
     }
     case "openWorktree":
-    case "copyPath": {
+    case "copyPath":
+    case "closeWorktree": {
+      // The shape only: whether the path is one the last scan offered a removal for is the host's check (worktrees/view.ts)
       const path = str((m as { path?: unknown }).path);
       return path ? { type: m.type, path } : undefined;
+    }
+    case "closeAllSafe": {
+      // The page names a repo and never a list: the host builds the list from the last scan
+      const repoPath = str((m as { repoPath?: unknown }).repoPath);
+      return repoPath ? { type: "closeAllSafe", repoPath } : undefined;
     }
     case "worktreeRows": {
       const repoPath = (v as { repoPath?: unknown }).repoPath;

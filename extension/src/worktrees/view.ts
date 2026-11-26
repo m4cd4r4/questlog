@@ -4,7 +4,7 @@ import { ago, norm } from "../rows.ts";
 import type { ParentPlan } from "../plans.ts";
 import { byName, countText, isLinked, lastCommitText, notARepo, plural, prText, ROW_ORDER, rowVerdict, select, sizeFact, sizeText, type ListedRepo, type ListedWorktree, type RowVerdict } from "./listing.ts";
 import { labelOf, repoNameOf, slugOf } from "./names.ts";
-import type { ScanFile, ScannedWorktree } from "./scan.ts";
+import type { ScanFile, ScannedRepo, ScannedWorktree } from "./scan.ts";
 import { sequencesOf, slugName, type Sequence } from "./sequence.ts";
 
 /** One linked worktree in the sidebar. Its id is `path`, never the slug: two repos can hold one slug. */
@@ -29,6 +29,8 @@ export type WorktreeRow = {
   facts: string[];
   /** False for a Missing row: its folder is gone, so there is nothing to open. */
   canOpen: boolean;
+  /** The verdict offers a removal (Closable and Orphan rows): the page draws Remove worktree, and the host checks `isRemoveOfferedByScan`. */
+  canRemove: boolean;
 };
 
 /** One scanned repo's worktrees. */
@@ -39,6 +41,8 @@ export type WorktreeBlock = {
   count: string;
   /** Sorted Needs you, Busy, In flight, Orphan, Closable, Missing, not read yet, then by slug. */
   rows: WorktreeRow[];
+  /** How many worktrees may be part of "Remove {n} safe": removable, and the pull request merged. */
+  safe: number;
   /**
    * Worktrees no plan names that are steps of one piece of work ("pricing-s1", "pricing-s2"), in step order.
    * Left out when there are none. Each step is one of `rows`, by path: the rows themselves are not regrouped.
@@ -67,6 +71,12 @@ const planFact = (path: string, plans: readonly ParentPlan[]): string | undefine
   }
   return undefined;
 };
+
+/** The scan read this worktree, its folder is there, and its verdict offers a removal. */
+const removeOffered = (w: ScannedWorktree): boolean => !w.unread && !w.prunable && w.verdict?.closeOffered === true;
+
+/** As `removeOffered`, and the verdict also clears it for "Remove {n} safe" (its pull request merged). */
+const bulkSafe = (w: ScannedWorktree): boolean => removeOffered(w) && w.verdict?.safeForBulk === true;
 
 const factsOf = (w: ListedWorktree, plans: readonly ParentPlan[], now: number, sequence?: string): string[] => {
   const out: string[] = [];
@@ -99,6 +109,7 @@ const rowOf = (w: ListedWorktree, repoName: string, plans: readonly ParentPlan[]
   size: w.size === undefined || w.size === "unknown" ? "" : sizeText(w.size.bytes),
   facts: factsOf(w, plans, now, sequence),
   canOpen: !w.prunable,
+  canRemove: removeOffered(w),
 });
 
 /** The sequences among a repo's worktrees that no plan names. Worked out here, each time the view is built; never stored. */
@@ -123,6 +134,7 @@ const blockOf = (r: ListedRepo, plans: readonly ParentPlan[], now: number): Work
     repoPath: r.path,
     count: rows.length === 0 && r.error !== undefined ? `could not read: ${r.error}` : countLine(rows, r.timedOut === true),
     rows,
+    safe: r.worktrees.filter(bulkSafe).length,
     ...(sequences.length > 0 ? { sequences } : {}),
   };
 };
@@ -139,15 +151,49 @@ export const worktreeBlocks = (scan: ScanFile | undefined, plans: readonly Paren
  * The linked worktree of the last scan at `path` (either slash, any letter case), or nothing: never a main
  * checkout, a bare entry, a folder that is no repo, or a path the scan does not hold.
  */
-export const offeredWorktree = (scan: ScanFile | undefined, path: string): ScannedWorktree | undefined => {
+export const offeredWorktree = (scan: ScanFile | undefined, path: string): ScannedWorktree | undefined => offeredEntry(scan, path)?.worktree;
+
+/** As `offeredWorktree`, with the repo that holds it: the removal runs its commands from that repo. */
+export const offeredEntry = (scan: ScanFile | undefined, path: string): { repo: ScannedRepo; worktree: ScannedWorktree } | undefined => {
   if (!scan || typeof path !== "string" || path === "") return undefined;
   const key = norm(path);
   for (const r of scan.repos) {
     if (notARepo(r)) continue;
     const w = (r.worktrees ?? []).find((x) => isLinked(x) && norm(x.path) === key);
-    if (w) return w;
+    if (w) return { repo: r, worktree: w };
   }
   return undefined;
+};
+
+/**
+ * True only for a linked worktree of the last scan whose verdict offers a removal (Closable and Orphan). The
+ * removal guard: `isOfferedByScan` alone is true for a Needs you row. Never true for a main checkout, a bare
+ * entry, a folder that is gone, a worktree the scan did not read, or a path the scan does not hold.
+ */
+export const isRemoveOfferedByScan = (scan: ScanFile | undefined, path: string): boolean => {
+  const w = offeredWorktree(scan, path);
+  return w !== undefined && removeOffered(w);
+};
+
+/**
+ * The worktrees "Remove {n} safe" may try for one repo, by its main checkout's path: linked, read, and cleared
+ * by their verdict (`safeForBulk`). Nothing for a repo path the scan does not hold, so the page cannot name one.
+ */
+export const safeWorktrees = (scan: ScanFile | undefined, repoPath: string): ScannedWorktree[] => {
+  if (!scan || typeof repoPath !== "string" || repoPath === "") return [];
+  const key = norm(repoPath);
+  const repo = scan.repos.find((r) => !notARepo(r) && norm(r.path) === key);
+  return repo ? (repo.worktrees ?? []).filter((w) => isLinked(w) && bulkSafe(w)) : [];
+};
+
+/**
+ * The scan without the linked worktrees at `paths` (either slash, any letter case): what the cache holds once
+ * they are removed. A main checkout and a bare entry are never taken out, and nothing else is changed.
+ */
+export const withoutWorktrees = (scan: ScanFile, paths: readonly string[]): ScanFile => {
+  const gone = new Set(paths.filter((p) => typeof p === "string" && p !== "").map(norm));
+  if (gone.size === 0) return scan;
+  return { ...scan, repos: scan.repos.map((r) => ({ ...r, worktrees: (r.worktrees ?? []).filter((w) => !(isLinked(w) && gone.has(norm(w.path)))) })) };
 };
 
 /** True only for a path the last scan showed as a row, so the page cannot make the host act on anything else. */

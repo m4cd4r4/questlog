@@ -277,3 +277,33 @@ test("a plan step that needs you draws the amber dot the Worktrees block gives t
   const dots = byClass(root, "step").map((s) => walk(s).filter((e) => e.className.split(" ")[0] === "dot").map((e) => e.className));
   assert.deepEqual(dots, [["dot a"], ["dot b live"]]);
 });
+
+test("Remove worktree is drawn only on a row the scan offers a removal for, and posts closeWorktree with the row's path", () => {
+  const all = [wt("acme-app-feature-a", "needs-you", { canRemove: false }), wt("acme-app-feature-b", "closable", { canRemove: true })];
+  const posts: any[] = [];
+  const root = render(withBlock(all, [card("1")], { safe: 1 }), { open: ["wc:/work/acme-app"] }, posts, host(all));
+  root.answer();
+  const [a, b] = byClass(root, "wt");
+  assert.deepEqual(buttons(a), ["Open worktree", "Copy path"]);
+  assert.deepEqual(buttons(b), ["Open worktree", "Copy path", "Remove worktree"]);
+  walk(b).find((e) => e.attrs.title === "Remove worktree")!.click();
+  assert.deepEqual(posts.filter((m) => m.type === "closeWorktree"), [{ type: "closeWorktree", path: "/work/acme-app-feature-b" }]);
+});
+
+test("Remove {n} safe sits beside the closable toggle only when the block has safe worktrees, says the list is shown first, and posts the repo path", () => {
+  const all = [wt("acme-app-feature-b", "closable", { canRemove: true }), wt("acme-app-feature-c", "closable", { canRemove: true })];
+  const posts: any[] = [];
+  const none = render(withBlock(all, [card("1")], { safe: 0 }), {}, [], host(all));
+  assert.deepEqual(byClass(none, "wt-safe"), []);
+  const root = render(withBlock(all, [card("1")], { safe: 2 }), {}, posts, host(all));
+  const chip = byClass(root, "wt-safe");
+  assert.equal(chip.length, 1);
+  assert.equal(chip[0].textContent, "Remove 2 safe");
+  assert.equal(chip[0].attrs.title, "Remove the 2 worktrees whose pull request merged and that are clean and pushed. The list is shown first.");
+  assert.equal(byClass(root, "wt-tog")[0].children.includes(chip[0]), true, "inside the toggle line, beside its count");
+  chip[0].click();
+  assert.deepEqual(posts.filter((m) => m.type === "closeAllSafe"), [{ type: "closeAllSafe", repoPath: "/work/acme-app" }]);
+  const one = render(withBlock(all, [card("1")], { safe: 1 }), {}, [], host(all));
+  assert.equal(byClass(one, "wt-safe")[0].textContent, "Remove 1 safe");
+  assert.equal(byClass(one, "wt-safe")[0].attrs.title, "Remove the worktree whose pull request merged and that is clean and pushed. The list is shown first.");
+});

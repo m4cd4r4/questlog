@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { ParentPlan } from "../src/plans.ts";
 import { FOLDER_NOT_FOUND } from "../src/worktrees/run.ts";
 import type { ScanFile, ScannedRepo, ScannedWorktree } from "../src/worktrees/scan.ts";
-import { countLine, isOfferedByScan, isOpenableByScan, offeredWorktree, worktreeBlocks, worktreeNote } from "../src/worktrees/view.ts";
+import { countLine, isOfferedByScan, isOpenableByScan, offeredWorktree, withoutWorktrees, worktreeBlocks, worktreeNote } from "../src/worktrees/view.ts";
 import { scannedRepo, scannedWt } from "./worktrees-fixtures.ts";
 
 const NOW = Date.UTC(2026, 0, 10);
@@ -82,12 +82,15 @@ test("a timed-out repo's count line says so and counts its unread rows as not re
   assert.deepEqual(late.map((r) => r.reason), ["not read yet", "not read yet"]);
 });
 
-test("Closable rows are flagged by their verdict, and a block carries no close counts: the page counts them from the rows", () => {
+test("Closable rows are flagged by their verdict; only a Closable or Orphan row offers a removal, and the block counts the safe ones", () => {
   const [block] = worktreeBlocks(THREE, [], NOW);
   assert.deepEqual(block.rows.filter((r) => r.verdict === "closable").map((r) => r.path), ["/work/acme-app-feature-c"]);
-  assert.equal("closable" in block, false);
-  assert.equal("safe" in block, false);
-  for (const r of block.rows) assert.equal("canClose" in r, false, r.slug);
+  assert.deepEqual(block.rows.filter((r) => r.canRemove).map((r) => r.path), ["/work/acme-app-feature-c"]);
+  assert.equal(block.safe, 1);
+  const merged = scanOf([scannedRepo("/work/acme-app", [main("/work/acme-app"), closable("/work/acme-app-feature-c"), orphan("/work/acme-app-feature-o"), needsYou("/work/acme-app-feature-a"), missing("/work/acme-app-feature-m"), unread("/work/acme-app-feature-u"), scannedWt("/work/acme-app-feature-x", "feat/x", { pr: { state: "closed", number: 4 } })])]);
+  const [b] = worktreeBlocks(merged, [], NOW);
+  assert.deepEqual(b.rows.filter((r) => r.canRemove).map((r) => r.slug).sort(), ["acme-app-feature-c", "acme-app-feature-o", "acme-app-feature-x"]);
+  assert.equal(b.safe, 1, "the merged one only; an orphan and a closed-unmerged one are removable alone, never in a batch");
 });
 
 
@@ -274,4 +277,23 @@ test("a sequence never crosses repos: one prefix in two repos is no sequence", (
     scannedRepo("/work/field-notes", [main("/work/field-notes"), scannedWt("/work/field-notes-pricing-s2", "feat/pricing-s2")]),
   ]);
   assert.deepEqual(worktreeBlocks(scan, [], NOW).map((b) => "sequences" in b), [false, false]);
+});
+
+test("withoutWorktrees drops only the removed linked worktree, matched without regard to case or slashes", () => {
+  const scan = scanOf([
+    scannedRepo("C:/work/app", [
+      main("C:/work/app"),
+      scannedWt("C:/work/app.git", "", { bare: true }),
+      closable("C:/work/app-a"),
+      closable("C:/work/app-b"),
+      closable("C:/work/app-c"),
+    ]),
+    scannedRepo("C:/work/other", [main("C:/work/other"), closable("C:/work/other-b")]),
+  ]);
+  const after = withoutWorktrees(scan, ["c:\\WORK\\app-b", "C:/work/app", "C:/work/app.git", "", 5 as unknown as string]);
+  assert.deepEqual(after.repos.map((r) => r.worktrees.map((w) => w.path)), [
+    ["C:/work/app", "C:/work/app.git", "C:/work/app-a", "C:/work/app-c"],
+    ["C:/work/other", "C:/work/other-b"],
+  ]);
+  assert.equal(withoutWorktrees(scan, []), scan);
 });

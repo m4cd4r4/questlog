@@ -30,7 +30,7 @@ claude plugin install questlog@questlog
 - Hover a card and click x to hide it. It comes back if the session updates.
 - If `restart-note.md` exists in the same folder, it is shown at the top of the view.
 - The **Refresh** button re-reads the folder.
-- The Worktrees section runs `git` in each worktree and reads its folder to get its size.
+- The Worktrees section runs `git` in each worktree and reads its folder to get its size. A worktree is removed only when you click Remove worktree and confirm. Removing runs `git worktree remove`, and deletes the local branch only when nothing on it is missing from its upstream or its pull request.
 - One network request: `gh pr list`, to see if a branch's pull request is merged. Nothing else is sent.
 
 Source and mod: [github.com/m4cd4r4/questlog](https://github.com/m4cd4r4/questlog). Licence: MIT.

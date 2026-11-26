@@ -2,6 +2,11 @@
 
 All notable changes to the Questlog mod and VS Code extension (called Session Compass before 1.0.0). Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The mod and the extension are versioned separately until 1.0.0.
 
+## Unreleased
+
+### Added
+- A Worktrees block under each repo says which git worktrees can be removed, and why the others cannot. A merged, clean, pushed worktree can be removed with one click, or all of a repo's safe ones at once; the list is shown first. A new `questlog-wt` command and one line at session start tell Claude the same.
+
 ## 1.2.0 - 2026-11-22
 
 ### Added
